@@ -90,10 +90,15 @@ class PushrakerCards:
         # Title of a message being sent -> pushraker's notification id
         self._rows: Dict[str, str] = {}
         if self.cards:
-            self._wrap()
+            self._wrap(final=False)
 
     async def component_init(self) -> None:
-        # Every component is loaded by now, pushraker's too
+        # Every component is loaded by now, pushraker's too. Moonraker may
+        # load this one first: where pushraker's component is what puts the
+        # package on sys.path (zmod_pushraker), the package is only
+        # importable now.
+        if self.cards and self._original is None:
+            self._wrap(final=True)
         if self._original is not None:
             self._wrap_attempts()
 
@@ -129,12 +134,13 @@ class PushrakerCards:
 
     # ---- the wrapper -------------------------------------------------------
 
-    def _wrap(self) -> None:
+    def _wrap(self, final: bool = True) -> None:
         try:
             from pushraker import discord  # type: ignore
         except Exception as e:
-            logging.warning(f"{LOG} pushraker not found ({e}); Discord "
-                            "cards are off")
+            if final:
+                logging.warning(f"{LOG} pushraker not found ({e}); Discord "
+                                "cards are off")
             return
         original = getattr(discord, "_payload", None)
         if original is None or getattr(original, "_kiln_card", False):
