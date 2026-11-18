@@ -1,0 +1,112 @@
+# Once a day, checks PyPI for a newer pushraker than the one in python/.
+# When there is one, opens a pull request that re-vendors python/ with it
+# (tools/vendor.py: pushraker and the PATCHES), with the offline tests'
+# result. Merging it ships the new version to every Zmod printer through
+# the update manager, so test it on a printer first (the PR says how). The
+# same check as FLSUN_pushraker's and pushraker-kiln's.
+name: pushraker release check
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compare with PyPI
+        id: check
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import glob, json, os, re, urllib.request
+          info = glob.glob("python/pushraker-*.dist-info")
+          vendored = re.match(r"pushraker-(.+)\.dist-info", os.path.basename(info[0])).group(1)
+          with urllib.request.urlopen("https://pypi.org/pypi/pushraker/json", timeout=30) as r:
+              latest = json.load(r)["info"]["version"]   # newest non-prerelease
+          def key(v):
+              return tuple(int(x) for x in re.findall(r"\d+", v))
+          print(f"vendored={vendored}")
+          print(f"latest={latest}")
+          print(f"newer={'true' if key(latest) > key(vendored) else 'false'}")
+          EOF
+          cat "$GITHUB_OUTPUT"
+
+      - name: Open a pull request
+        if: steps.check.outputs.newer == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VENDORED: ${{ steps.check.outputs.vendored }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          branch="pushraker-${LATEST}"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+              echo "Branch $branch exists already; nothing to do."
+              exit 0
+          fi
+
+          # Re-vendor. Exit 1 with "no longer apply" means a fix in
+          # tools/vendor.py's PATCHES didn't match the new release (python/
+          # is refilled anyway); anything else is a real failure.
+          set +e
+          python3 tools/vendor.py "${LATEST}" 2>&1 | tee /tmp/vendor.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" = 0 ]; then
+              fix="**Still needed**: ${LATEST} still has the settings page bug, and \`tools/vendor.py\` patched it."
+          elif grep -q "no longer apply" /tmp/vendor.log; then
+              fix="**Check**: the page fix in \`tools/vendor.py\` (PATCHES) no longer matches ${LATEST}. If upstream fixed the bug, drop it from PATCHES. Otherwise update it."
+          else
+              echo "tools/vendor.py failed"; exit 1
+          fi
+
+          # The offline tests need what Zmod's Moonraker environment has
+          pip install -q apprise requests jinja2 pillow
+          set +e
+          python3 test_zmod_pushraker.py > /tmp/test.log 2>&1
+          trc=$?
+          set -e
+          tail -3 /tmp/test.log
+          if [ "$trc" = 0 ]; then
+              tests="passed ($(grep -c '^ok' /tmp/test.log) checks)"
+          else
+              tests="**FAILED**:"$'\n\n```\n'"$(grep -v '^ok' /tmp/test.log | tail -30)"$'\n```'
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A python
+          git commit -m "pushraker ${LATEST}"
+          git push origin "$branch"
+
+          cat > /tmp/body.md <<EOF
+          pushraker **${LATEST}** is out on PyPI (vendored now: ${VENDORED}). This PR refills \`python/\` with \`tools/vendor.py ${LATEST}\`. Check its requirements against Zmod's Moonraker environment (Apprise, requests, Pillow, Jinja2) in the release notes.
+
+          - Release notes: https://github.com/noon92/pushraker/releases/tag/v${LATEST}
+          - Changes: https://github.com/noon92/pushraker/compare/v${VENDORED}...v${LATEST}
+          - Page fix: ${fix}
+          - Offline tests (\`test_zmod_pushraker.py\`): ${tests}
+
+          **Before merging**, try it on a Zmod printer (over SSH as root). Merging ships it to every printer through the update manager.
+
+          \`\`\`sh
+          chroot /usr/data/.mod/.zmod sh -c 'cd /opt/config/mod_data/plugins/zmod_pushraker && git fetch origin ${branch} && git checkout ${branch} && /root/moonraker-env/bin/python3 -m compileall -q python moonraker >/dev/null'
+          reboot
+          \`\`\`
+
+          Then check that Send Test works at \`http://<printer-ip>:82/notifications/\` and that the Discord card looks right. Afterwards, \`git checkout main\` in the same folder (inside the chroot) puts the printer back on the update manager's branch. After merging, tag a release (the update manager's channel is stable).
+
+          Opened by the daily release check (\`.github/workflows/pushraker-release.yml\`).
+          EOF
+          gh pr create --base "$GITHUB_REF_NAME" --head "$branch" --title "pushraker ${LATEST}" --body-file /tmp/body.md

@@ -1,0 +1,2676 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-PackageHomePage: https://github.com/noon92/pushraker -->
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 @noon92 -->
+<!-- pushraker's settings page. Talks to Moonraker's pushraker
+     component (GET/POST /server/pushraker/config, POST .../test),
+     through the same origin (nginx proxies /server/ to Moonraker, as the
+     Fluidd and Mainsail setups do) or Moonraker's own port. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Push notifications</title>
+<style>
+    :root { --bg: #1a1a1a; --card: #2d2d2d; --item: #3d3d3d; --hover: #4d4d4d; --accent: #4fc3f7; --text: #e0e0e0; --muted: #888; --success: #81c784; --error: #e57373; --warning: #ff9800; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 20px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { color: var(--accent); margin-bottom: 16px; font-size: 22px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    h1 small { font-size: 12px; color: var(--muted); font-weight: normal; }
+    h1 small a { margin-right: 10px; }
+    .nt-guide { font-size: 12px; font-weight: 500; margin-left: 10px; }
+    .card { background: var(--card); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .btn { border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; min-height: 34px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #000; }
+    .btn-primary:hover:not(:disabled) { background: #29b6f6; }
+    .btn-secondary { background: #555; color: #fff; }
+    .btn-secondary:hover:not(:disabled) { background: #666; }
+    .pr-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; position: sticky; bottom: 0; background: var(--bg); padding: 12px 10px; }
+    .pr-status { font-size: 13px; color: var(--muted); }
+    /* Save & Apply is a group of its own: a gap from Cancel and Send Test
+       (on a phone: one line, those two at the left, it at the right) */
+    .btn-save { background: #2e7d32; color: #fff; margin-left: 40px; }
+    @media (max-width: 600px) {
+        .btn-save { white-space: nowrap; }
+        .pr-actions .pr-save-wrap { margin-right: auto; }
+        .pr-actions .btn { padding: 8px 9px; font-size: 12px; }
+        .pr-actions:has(.pr-safe.on) { padding-bottom: 12px; }
+        .pr-actions:has(.pr-safe.on) .pr-status { margin-top: 16px; }
+        .pr-actions { gap: 8px; padding: 12px 8px; }
+        .pr-actions .btn { white-space: nowrap; }
+        .pr-status { flex-basis: 100%; }
+    }
+    .btn-save:hover:not(:disabled) { background: #388e3c; }
+    /* The note hangs under Save & Apply without moving it: the buttons
+       stay on one line, tops level */
+    .pr-save-wrap { position: relative; display: inline-flex; margin-right: 30px; }
+    .pr-save-wrap .btn-save { margin-left: 0; }
+    .pr-safe { display: none; position: absolute; top: 100%; left: 0; margin-top: 3px; font-size: 11px; color: var(--success); white-space: nowrap; }
+    .pr-safe.on { display: block; }
+    .pr-actions:has(.pr-safe.on) { padding-bottom: 28px; }
+    @media (max-width: 380px) {
+        .pr-actions { gap: 6px; padding-left: 6px; padding-right: 6px; }
+        .pr-actions .btn { padding: 8px 6px; font-size: 11px; }
+    }
+    /* Save and Send Test progress: a popup like Firmware Config's */
+    .pr-run .pr-modal-box { max-width: 720px; border-radius: 12px; padding: 24px; max-height: 80vh; display: flex; flex-direction: column; }
+    .pr-run h3 { font-size: 18px; margin-bottom: 16px; }
+    .pr-run-msg { color: var(--text); margin-bottom: 16px; font-size: 14px; }
+    .pr-run-msg.ok { color: var(--success); }
+    .pr-run-msg.err { color: var(--error); }
+    .pr-console { background: #0d0d0d; color: #ddd; font-family: monospace; font-size: 12px; padding: 12px; border-radius: 6px; white-space: pre-wrap; word-wrap: break-word; height: 300px; max-height: 50vh; overflow-y: auto; margin-bottom: 16px; }
+    .pr-console .err { color: var(--error); font-weight: 600; }
+    .pr-console .ok { color: var(--success); }
+    .pr-run .btn { padding: 10px 20px; font-size: 14px; }
+    .pr-error { color: var(--error); font-size: 13px; margin: 8px 0; font-weight: 500; scroll-margin-bottom: 90px; }
+    .pr-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 10; padding: 20px; }
+    .pr-modal.open { display: flex; }
+    .pr-modal-box { background: var(--card); border-radius: 8px; padding: 20px; max-width: 480px; width: 100%; }
+    .pr-modal-box h3 { color: #fff; margin-bottom: 12px; font-size: 16px; }
+    .pr-modal-box p { white-space: pre-wrap; margin-bottom: 20px; font-size: 14px; line-height: 1.5; }
+    .pr-modal-box .pr-buttons { display: flex; gap: 10px; justify-content: flex-end; }
+    .pr-discard h3 { font-size: 18px; }
+    .pr-discard p { font-size: 15px; }
+    .pr-discard .btn { font-size: 14px; min-height: 38px; padding: 8px 16px; }
+    .btn-keep { background: #2e7d32; color: #fff; }
+    .btn-keep:hover { background: #388e3c; }
+    .btn-discard { background: #c62828; color: #fff; }
+    .btn-discard:hover:not(:disabled) { background: #d32f2f; }
+    .pr-loading { color: var(--muted); padding: 24px; text-align: center; }
+    .pr-hidden { display: none !important; }
+    .nt { font-size: 14px; }
+    .nt-enable { display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--item); border-radius: 6px; margin-bottom: 16px; cursor: pointer; color: #fff; font-weight: 500; }
+    .nt-enable.nt-sec { font-weight: 600; margin-bottom: 12px; }
+    .nt input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex: none; }
+    .nt-section { font-size: 16px; color: #fff; font-weight: 600; margin: 8px 0 10px; }
+    .nt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-bottom: 20px; }
+    .nt-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .nt-field .nt-hint { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+    .nt-field .nt-warn { font-size: 11px; color: var(--warning); margin-top: 4px; }
+    .nt-input { width: 100%; background: var(--item); border: 1px solid #555; border-radius: 6px; padding: 9px 10px; color: var(--text); font-size: 13px; font-family: monospace; }
+    .nt-input:focus { outline: none; border-color: var(--accent); }
+    select.nt-input { font-family: inherit; cursor: pointer; }
+    .nt-secret { display: flex; gap: 6px; }
+    .nt-secret .btn { min-height: 0; padding: 0 12px; }
+    .nt-table-wrap { overflow-x: auto; margin-bottom: 12px; }
+    .nt-table { width: 100%; border-collapse: separate; border-spacing: 0 4px; min-width: 460px; }
+    .nt-table th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; text-align: left; padding: 0 10px 2px; }
+    .nt-table th.nt-c, .nt-table td.nt-c, .nt-table th.nt-ch { text-align: center; width: 64px; white-space: nowrap; }
+    .nt-table th.nt-ch { width: auto; }
+    .nt-table td { background: var(--item); padding: 8px 10px; vertical-align: middle; }
+    .nt-table td:first-child { border-radius: 6px 0 0 6px; }
+    .nt-table td:last-child { border-radius: 0 6px 6px 0; }
+    .nt-table tr.nt-group td { background: none; padding: 10px 2px 0; font-size: 12px; color: var(--muted); }
+    .nt-table tr.nt-off .nt-dim { opacity: 0.4; }
+    .nt-name { color: #fff; }
+    .nt-icon { display: inline-block; width: 24px; }
+    .nt-table select.nt-input.nt-layer { width: auto; padding: 4px 6px; display: inline-block; font-family: inherit; }
+    .nt-sub { display: block; margin-top: 4px; padding-left: 26px; font-size: 12px; color: #8a8f98; white-space: normal; }
+    .nt-sub select.nt-input.nt-layer { font-size: 12px; padding: 2px 4px; max-width: 140px; }
+    .nt-sub input.nt-input.nt-deg { width: 56px; font-size: 12px; padding: 2px 4px; display: inline-block; }
+    .nt-foot { font-size: 12px; color: #8a8f98; margin: 0 0 16px; }
+    .nt-table select.nt-input { padding: 5px 8px; width: 120px; }
+    .nt-table td input[type=checkbox] { vertical-align: middle; }
+    .nt-na { color: var(--muted); }
+    .nt-public { color: var(--error); font-size: 12px; margin-top: 6px; line-height: 1.4; font-weight: 500; }
+    .nt-inline { display: flex; gap: 6px; }
+    .nt-inline .btn { min-height: 0; padding: 0 12px; white-space: nowrap; }
+    .nt-inline .btn.nt-active { border-color: var(--accent); color: var(--accent); }
+    /* Printer URL: Fill in lists this page's address and the printer's
+       network addresses; the list is as wide as the field and button */
+    .nt-fill-wrap { position: relative; }
+    .nt-fill-menu { display: none; position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; background: #1e1e1e; border: 1px solid #555; border-radius: 8px; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+    .nt-fill-menu.open { display: block; }
+    .nt-fill-menu button { display: block; width: 100%; text-align: left; background: none; border: none; border-top: 1px solid #333; color: var(--text); font: inherit; font-size: 14px; padding: 12px; cursor: pointer; }
+    .nt-fill-menu button:first-child { border-top: none; }
+    .nt-fill-menu button:hover, .nt-fill-menu button:focus { background: #3a3a3a; outline: none; }
+    .nt-fill-menu code { font-family: monospace; }
+    .nt-fill-menu small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .nt-fill-menu .nt-fill-clear { color: var(--muted); }
+    /* Changed since the last save: a bar down the left edge of the field,
+       of the section switch, or of the notification row */
+    .nt-field.nt-chg { box-shadow: -9px 0 0 -6px var(--accent); }
+    label.nt-enable.nt-chg { box-shadow: inset 3px 0 0 var(--accent); }
+    tr.nt-chg td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+    .nt-field .nt-hint a { color: var(--accent); }
+    .nt-disabled .nt-body { opacity: 0.55; }
+    .nt-unit { align-items: center; }
+    .nt-unit .nt-input { width: 80px; flex: none; }
+    .nt-unit span { color: var(--muted); font-size: 13px; }
+    .nt-port { display: grid; grid-template-columns: 90px 1fr; gap: 6px; }
+    .nt-hint a { color: var(--accent); }
+    .nt-table tr.nt-nopush .nt-dim-push { opacity: 0.4; }
+    .nt-no-push .nt-col-push { display: none; }
+    /* Email off: the column stays, greyed, as a reminder it's there */
+    .nt-no-email .nt-col-email input { opacity: .35; cursor: not-allowed; }
+    /* Time-left method: one row of radio buttons, each with an (i) that
+       opens the method's explanation (hover on a computer, tap on a phone) */
+    .nt-eta { background: var(--item); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; position: relative; }
+    .nt-eta .nt-eta-lbl { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .nt-eta-opts { display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: center; }
+    .nt-eta-opts label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: #fff; white-space: nowrap; position: relative; font-size: 14px; }
+    .nt-eta-opts input[type=radio] { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; cursor: pointer; }
+    .nt-eta-opts .nt-eta-def { color: var(--muted); font-size: 12px; }
+    .nt-i { display: inline-flex; width: 16px; height: 16px; border: 1px solid #777; border-radius: 50%; color: #aaa; font-size: 11px; font-weight: 700; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; align-items: center; justify-content: center; cursor: help; line-height: 1; background: none; padding: 0; }
+    .nt-i.on, .nt-i:hover { border-color: var(--accent); color: var(--accent); }
+    /* The ? is drawn, not typed: a font's ? sits off-centre in some fonts */
+    .nt-i { font-size: 0 !important; vertical-align: middle; position: relative; top: -0.25em; }
+    .nt-i::after { content: ''; width: 58%; height: 58%; background: currentColor;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3 3.4a2 2 0 1 1 3 1.7c-.6.4-1 .8-1 1.5v.3' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round'/%3E%3Ccircle cx='5' cy='8.9' r='.9'/%3E%3C/svg%3E") center / contain no-repeat;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3 3.4a2 2 0 1 1 3 1.7c-.6.4-1 .8-1 1.5v.3' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round'/%3E%3Ccircle cx='5' cy='8.9' r='.9'/%3E%3C/svg%3E") center / contain no-repeat; }
+    .nt-tip { display: none; position: absolute; top: calc(100% + 8px); left: 0; z-index: 6; background: #1e1e1e; border: 1px solid #555; border-radius: 8px; padding: 10px 12px; width: 340px; font-size: 12px; color: var(--text); line-height: 1.45; white-space: normal; box-shadow: 0 6px 20px rgba(0,0,0,0.5); font-weight: normal; cursor: auto; }
+    .nt-tip.open { display: block; }
+    .nt-tip b { color: #fff; }
+    .nt-tip code { font-family: monospace; color: var(--accent); }
+    .nt-eta.nt-chg { box-shadow: inset 3px 0 0 var(--accent); }
+    @media (max-width: 600px) {
+        .nt-eta-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+        .nt-eta-opts label { position: static; }
+        .nt-tip { left: 12px; right: 12px; width: auto; top: calc(100% - 4px); }
+    }
+    /* Notification data: Edit default data, the Data column's Edit
+       buttons (red * custom, blue * none), and the editor (a popup) */
+    .nt-table th.nt-data, .nt-table td.nt-data { text-align: center; width: 84px; white-space: nowrap; }
+    .nt-data-btn { min-height: 0; padding: 5px 12px; white-space: nowrap; }
+    .nt-ast { font-weight: 700; margin-left: 3px; }
+    .nt-ast.red { color: #ef5350; }
+    .nt-ast.blue { color: var(--accent); }
+    /* On a phone the Data button is the row's last line instead of a column */
+    .nt-data-inline { display: none; }
+    .pr-data .pr-modal-box { max-width: min(1600px, 96vw); border-radius: 12px; padding: 20px 24px; max-height: 94vh; overflow-y: auto; overscroll-behavior: contain; }
+    .pr-data, .pr-data .cm-scroller { overscroll-behavior: contain; }
+    body.pr-locked { overflow: hidden; }
+    .pr-data-grid { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr) !important; }
+    .pr-prevwrap { margin-top: 12px; }
+    .pr-imgwrap { margin-top: 18px; }
+    .pr-topicwrap, .pr-priowrap { margin-top: 18px; max-width: 340px; }
+    .pr-priowrap.off select, .pr-topicwrap.off input, .pr-priowrap.off .pr-lbl > span, .pr-topicwrap.off .pr-lbl > span { opacity: .45; }
+    .pr-priowrap.off select { cursor: not-allowed; }
+    .nt-greyed .nt-field > *:not(label), .nt-greyed label { opacity: .5; }
+    .nt-greyed label .nt-i { opacity: 1; }
+    .pr-topicwrap.off input { cursor: not-allowed; }
+    /* Objects: no taller than the contents box starts out */
+    .pr-data .pr-pick { max-height: 260px; }
+    #pr-t-title { height: auto; min-height: 0; resize: none; overflow: hidden; line-height: 1.4; margin-bottom: 10px; }
+    .pr-rec { font-size: 12px; color: var(--muted); }
+    .pr-custom { margin-bottom: 4px; }
+    .pr-custom input.pr-code { margin-bottom: 8px; }
+    #pr-when { height: auto; min-height: 0; resize: vertical; font-family: monospace; font-size: 13px; margin-bottom: 4px; }
+    .pr-now { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+    .pr-now b { font-weight: 600; }
+    .pr-now b.yes { color: var(--success); } .pr-now b.no { color: var(--muted); }
+    /* The name with its fixed pushraker. in front, in one box */
+    .pr-prefixed { display: flex; align-items: center; background: var(--item); border: 1px solid #555; border-radius: 6px; margin-bottom: 4px; cursor: text; }
+    .pr-prefixed:focus-within { border-color: var(--accent); }
+    .pr-prefixed .pr-prefix { padding: 9px 0 9px 10px; color: var(--muted); font-family: monospace; font-size: 13px; user-select: none; }
+    .pr-prefixed input { flex: 1; min-width: 0; border: none; background: transparent; padding: 9px 10px 9px 0; color: var(--text); font-size: 13px; font-family: monospace; }
+    .pr-prefixed input:focus { outline: none; }
+    #pr-cm-when .cm-editor { border: 1px solid #555; border-radius: 6px; font-size: 13px; margin-bottom: 4px; max-height: 160px; }
+    #pr-cm-when .cm-scroller { overflow: auto; font-family: monospace; }
+    .cm-placeholder { color: var(--muted) !important; font-style: italic; }
+    /* A field Done can't take: outlined; the reason next to Done */
+    .pr-bad, .pr-bad .cm-editor, .pr-prefixed.pr-bad { outline: 2px solid var(--error); outline-offset: -1px; }
+    .pr-buttons { position: relative; }
+    .pr-block-pop { position: absolute; left: 0; bottom: calc(100% + 8px); max-width: min(460px, 100%); background: var(--item); border: 1px solid var(--error); border-radius: 6px; padding: 8px 10px; font-size: 13px; color: var(--text); box-shadow: 0 4px 16px rgba(0,0,0,.4); z-index: 5; }
+    .pr-now code { font-size: 11px; }
+    .pr-repeat { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: #ddd; margin-bottom: 10px; }
+    .pr-repeat select, .pr-repeat input { background: #2a2a2a; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 3px 6px; font-size: 13px; }
+    .pr-repeat input { width: 64px; }
+    .nt-x { background: none; border: 1px solid #555; color: #e57373; border-radius: 5px; width: 26px; height: 26px; margin-left: 6px; cursor: pointer; font-size: 13px; vertical-align: middle; }
+    .nt-x:hover { border-color: var(--error); background: rgba(229,115,115,.12); }
+    .nt-crow code { font-size: 11px; }
+    .nt-add td { padding-top: 10px; }
+    tr.nt-topic-bad, tr.nt-bad { outline: 2px solid var(--error); outline-offset: -2px; }
+    input.nt-bad, select.nt-bad, input.nt-live-bad { outline: 2px solid var(--error); }
+    .nt-live-msg { color: var(--error); font-size: 12px; margin-left: 8px; }
+    .nt-field > .nt-live-msg { display: block; margin: 4px 0 0; }
+    #nt-stored-error { border-color: var(--error); }
+    .pr-cm .pr-console { height: auto; min-height: 0; max-height: 200px; margin: 12px 0 0; display: none; }
+    .pr-cm .pr-console.on { display: block; }
+    .pr-data h3 { font-size: 18px; margin-bottom: 10px; }
+    .pr-modes { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 14px; }
+    .pr-lblrow { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .pr-link { color: var(--accent); text-decoration: underline; font-size: 12px; cursor: pointer; background: none; border: none; padding: 0; font-family: inherit; }
+    .pr-data input.pr-code, .pr-data textarea.nt-input { font-family: monospace; }
+    .pr-data input.pr-code { font-size: 13px; margin-bottom: 10px; }
+    #pr-data-text { min-height: 220px; }
+    #pr-cm-host .cm-editor { border: 1px solid #555; border-radius: 6px; font-size: 13px; height: 260px; min-height: 120px; resize: vertical; overflow: hidden; }
+    #pr-cm-host .cm-scroller { overflow: auto; }
+    #pr-cm-host .cm-scroller { font-family: monospace; }
+    .pr-imgs { display: grid; grid-template-columns: repeat(4, minmax(0, 84px)); gap: 8px; margin: 2px 0 6px; }
+    .pr-img { text-align: center; font-size: 11px; color: #ccc; cursor: pointer; min-width: 0; background: none; border: none; padding: 0; font-family: inherit; }
+    .pr-img .pr-th { width: 100%; aspect-ratio: 4/3; box-sizing: border-box; border-radius: 5px; border: 2px solid #444; background: #222 center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: #777; font-size: 20px; margin-bottom: 3px; }
+    .pr-img.on .pr-th { border-color: var(--success, #4caf50); }
+    .pr-img.on { color: #fff; }
+    .pr-imgopts { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; color: #ddd; margin: 2px 0 10px; }
+    .pr-imgopts select { background: #2a2a2a; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 3px 6px; font-size: 13px; }
+    .pr-imgopts input { accent-color: var(--accent); }
+    .pr-prev img { display: block; max-width: 100%; max-height: 340px; border-radius: 6px; margin-top: 10px; }
+    .pr-jj { background: #1e1e1e; border: 1px solid #444; border-radius: 6px; padding: 8px 10px 6px; margin-bottom: 10px; font-size: 13px; }
+    .pr-jj .pr-lbl { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .pr-jj button.pr-j { background: #2a2a2a; color: #ffcc80; border: 1px solid #555; border-radius: 5px; font-size: 12px; padding: 3px 9px; margin: 0 4px 4px 0; font-family: monospace; cursor: pointer; }
+    .pr-jj button.pr-j:hover { background: #333; }
+    .pr-jj .pr-ops { border-top: 1px solid #2a2a2a; padding-top: 6px; margin-top: 2px; }
+    .pr-row.pr-loop { color: #ffcc80; }
+    .nt-mini { min-height: 0; padding: 2px 9px; font-size: 12px; margin-left: 6px; vertical-align: baseline; }
+    .pr-cm .pr-modal-box { max-width: 520px; }
+    .pr-cm p { font-size: 14px; line-height: 1.45; color: var(--text); margin-bottom: 10px; }
+    .pr-cm table { width: 100%; border-collapse: collapse; margin: 6px 0 12px; font-size: 13px; }
+    .pr-cm td { padding: 5px 0; border-bottom: 1px solid #333; color: var(--text); }
+    .pr-cm td:first-child { color: var(--muted); width: 42%; }
+    .pr-cm .pr-note { font-size: 12px; }
+    .pr-cm .pr-buttons { justify-content: flex-start; gap: 12px; margin-top: 14px; }
+    .pr-cm .pr-buttons .btn { margin-left: 0; }
+    .pr-cm .pr-cm-msg { font-size: 13px; margin-top: 10px; min-height: 18px; color: var(--text); }
+    .pr-cm .pr-cm-msg.err { color: var(--error); }
+    .btn-remove { background: #c62828; color: #fff; border: none; }
+    .btn-remove:hover { background: #d32f2f; }
+    .pr-modes label { display: inline-flex; gap: 6px; align-items: center; color: #fff; cursor: pointer; font-size: 14px; }
+    .pr-modes input { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; }
+    .pr-modes .pr-lbl { margin: 0; }
+    .pr-data-grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px; align-items: start; }
+    .pr-data .pr-lbl { font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+    .pr-tap { display: none; } @media (hover: none), (pointer: coarse) { .pr-tap { display: inline; } .pr-click { display: none; } }
+    .pr-data textarea.nt-input { height: 130px; resize: vertical; font-size: 13px; line-height: 1.4; }
+    .pr-data textarea#pr-data-text { min-height: 260px; }
+    .pr-data textarea.pr-ro { color: var(--muted); }
+    .pr-data-err { color: var(--error); font-size: 12px; margin-top: 6px; }
+    .pr-data-err code { font-family: monospace; }
+    .pr-pick { background: #1e1e1e; border: 1px solid #444; border-radius: 6px; font-size: 13px; max-height: 420px; overflow-y: auto; }
+    .pr-row { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid #2a2a2a; color: #ddd; cursor: pointer; flex-wrap: wrap; }
+    .pr-pick > .pr-row:first-child { border-top: none; }
+    .pr-row:hover { background: #262626; }
+    .pr-row .pr-ar { color: var(--muted); font-size: 15px; width: 16px; flex: none; line-height: 1; text-align: center; }
+    .pr-row code { font-family: monospace; font-size: 12px; color: var(--text); }
+    .pr-row.pr-leaf code { color: var(--accent); }
+    .pr-row small { color: var(--muted); font-size: 11px; }
+    .pr-row.pr-cat { color: #fff; font-weight: 600; border-top: 1px solid #333; }
+    .pr-row.pr-cat a { font-size: 12px; font-weight: normal; }
+    .pr-row.pr-sel { background: #263238; }
+    .pr-deg { background: #555; color: #fff; border: none; border-radius: 5px; font-size: 12px; font-weight: 600; padding: 3px 9px; font-family: inherit; cursor: pointer; margin: 0 0 4px 14px; }
+    .pr-deg:hover { background: #666; }
+    .pr-row .nt-i, .pr-fmt .nt-i { width: 17px; height: 17px; font-size: 12px; }
+    /* The (i) explanations: a tooltip (hover on a computer; a click or tap
+       keeps it open until the next click or tap anywhere) */
+    .pr-tip { display: none; position: fixed; z-index: 30; max-width: 320px; background: #1e1e1e; border: 1px solid #555; border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.4; color: var(--text); box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+    .pr-tip a { margin-left: 4px; }
+    .pr-fmt { padding: 6px 10px 8px; border-top: 1px solid #2a2a2a; background: #181818; }
+    .pr-fmt .pr-lbl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .pr-fmt button.pr-f { background: #2a2a2a; color: var(--accent); border: 1px solid #555; border-radius: 5px; font-size: 12px; padding: 3px 9px; margin: 0 4px 4px 0; font-family: monospace; cursor: pointer; }
+    .pr-fmt button.pr-f:hover { background: rgba(79,195,247,.12); }
+    .pr-fmt button.pr-f small { font-family: -apple-system, sans-serif; color: #ccc; margin-left: 4px; }
+    .pr-any { padding: 8px 10px; border-top: 1px solid #333; color: var(--muted); font-size: 12px; }
+    .pr-any code { color: var(--text); }
+    .pr-prev { background: #111; border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; min-height: 60px; }
+    .pr-prev .pr-pt { font-weight: 700; color: #fff; }
+    .pr-prev .pr-px { color: var(--accent); }
+    .pr-prev .pr-pn { color: var(--muted); font-style: italic; }
+    .pr-note { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .pr-data .pr-buttons { margin-top: 16px; justify-content: flex-start; gap: 10px; }
+    .pr-data .pr-buttons .btn { font-size: 14px; min-height: 38px; }
+    .pr-data .pr-buttons .pr-gap { width: 30px; }
+    .pr-data .pr-buttons .btn-save { margin-left: 0; }
+    @media (max-width: 600px) {
+        .pr-data-grid { grid-template-columns: minmax(0, 1fr) !important; }
+        .pr-col-l, .pr-col-r { display: contents; }
+        .pr-side { order: 1; } .pr-ed { order: 2; } .pr-imgwrap { order: 3; } .pr-priowrap, .pr-topicwrap { order: 3; max-width: none; } .pr-prevwrap { order: 4; }
+        .pr-pick { max-height: 260px; }
+        .pr-data .pr-modal-box { padding: 12px 10px; max-width: 100%; }
+        .pr-modal { padding: 6px; }
+        body { padding: 8px; }
+        .card { padding: 10px; }
+        .nt-table th.nt-data, .nt-table td.nt-data { display: none; }
+        .nt-data-inline { display: block; margin-top: 6px; }
+    }
+    @media (max-width: 600px) {
+        .nt-grid { grid-template-columns: 1fr; }
+        .nt-table { min-width: 0; font-size: 13px; }
+        .nt-table td { padding: 8px 3px; }
+        .nt-table td:first-child { padding-left: 8px; }
+        .nt-table th { padding: 0 3px 2px; font-size: 10px; letter-spacing: 0; }
+        .nt-table th.nt-c, .nt-table td.nt-c { width: 30px; }
+
+        .nt-sub { font-size: 11px; white-space: normal; }
+        .nt-sub select.nt-input.nt-layer { font-size: 11px; padding: 2px 2px; max-width: 126px; }
+        /* Just wide enough for "Default" */
+        .nt-table select.nt-input { width: auto; padding: 5px 2px; font-size: 12px; }
+        .nt-icon { width: 20px; }
+    }
+</style>
+</head>
+<body>
+<div class="container">
+<h1><span>Push notifications</span><small><a href="https://github.com/noon92/pushraker/blob/main/docs/guide.md" target="_blank">Guide</a><span id="pr-version"></span></small></h1>
+<div class="card">
+<div class="pr-loading" id="pr-loading">Loading settings…</div>
+<div class="nt pr-hidden" id="nt-root">
+    <label class="nt-enable"><input type="checkbox" id="nt-enabled"> Enable notifications</label>
+
+
+    <div class="nt-body">
+        <div class="nt-section">Push notifications</div>
+        <label class="nt-enable nt-sec"><input type="checkbox" id="nt-push-enabled"> Send push notifications</label>
+        <div id="nt-push">
+        <div class="nt-grid">
+            <div class="nt-field">
+                <label for="nt-provider">Push service</label>
+                <select class="nt-input" id="nt-provider">
+                    <option value="discord_dm">Discord (direct message)</option>
+                    <option value="discord">Discord (server channel)</option>
+                    <option value="gotify">Gotify</option>
+                    <option value="ntfy" selected>ntfy</option>
+                    <option value="pushover">Pushover</option>
+                    <option value="telegram">Telegram</option>
+                </select>
+                <div class="nt-hint" id="nt-provider-hint"></div>
+                <div class="nt-warn" id="nt-topic-warn" style="display:none"></div>
+            </div>
+        </div>
+        <div class="nt-grid" id="nt-gotify">
+            <div class="nt-field">
+                <label for="nt-gt-server">Server URL</label>
+                <input class="nt-input" id="nt-gt-server" placeholder="https://gotify.example.com" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="nt-field">
+                <label for="nt-gt-token">App token</label>
+                <div class="nt-secret">
+                    <input class="nt-input" id="nt-gt-token" type="password" autocomplete="new-password" spellcheck="false">
+                    <button type="button" class="btn btn-secondary" data-toggle="nt-gt-token">Show</button>
+                </div>
+                <div class="nt-hint">In the Gotify web UI: Apps &gt; Create Application.</div>
+            </div>
+        </div>
+        <div class="nt-grid" id="nt-pushover">
+            <div class="nt-field">
+                <label for="nt-po-user">User key</label>
+                <input class="nt-input" id="nt-po-user" autocomplete="off" spellcheck="false">
+                <div class="nt-hint">Shown on your <a href="https://pushover.net" target="_blank">Pushover</a> dashboard.</div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-po-token">Application API token</label>
+                <div class="nt-secret">
+                    <input class="nt-input" id="nt-po-token" type="password" autocomplete="new-password" spellcheck="false">
+                    <button type="button" class="btn btn-secondary" data-toggle="nt-po-token">Show</button>
+                </div>
+                <div class="nt-hint">Create an application for the printer on pushover.net.</div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-po-device">Device (optional)</label>
+                <input class="nt-input" id="nt-po-device" placeholder="All devices" autocomplete="off" spellcheck="false">
+            </div>
+        </div>
+        <div class="nt-grid" id="nt-telegram">
+            <div class="nt-field">
+                <label for="nt-tg-token">Bot token</label>
+                <div class="nt-secret">
+                    <input class="nt-input" id="nt-tg-token" type="password" autocomplete="new-password" spellcheck="false" placeholder="123456789:ABC...">
+                    <button type="button" class="btn btn-secondary" data-toggle="nt-tg-token">Show</button>
+                </div>
+                <div class="nt-hint">In Telegram, open <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <b>/newbot</b>, pick a name, and paste the token it gives you.</div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-tg-chat">Chat ID</label>
+                <input class="nt-input" id="nt-tg-chat" placeholder="Found automatically" autocomplete="off" spellcheck="false">
+                <div class="nt-hint">Leave empty: open your new bot in Telegram, press <b>Start</b>, then Save or Send Test and it is found for you. For a group, add the bot to the group and send a message there first.</div>
+            </div>
+        </div>
+        <div class="nt-grid" id="nt-discord-dm">
+            <div class="nt-field">
+                <label for="nt-dc-token">Bot token</label>
+                <div class="nt-secret">
+                    <input class="nt-input" id="nt-dc-token" type="password" autocomplete="new-password" spellcheck="false">
+                    <button type="button" class="btn btn-secondary" data-toggle="nt-dc-token">Show</button>
+                </div>
+                <div class="nt-hint">In the <a href="https://discord.com/developers/applications" target="_blank">Discord Developer Portal</a>: <b>New Application</b>, name it, then <b>Bot</b> &gt; <b>Reset Token</b> and copy it. Discord only lets the bot message you if you share a server: Save shows a link to add it to one of yours if needed.</div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-dc-user">Send to (user ID)</label>
+                <input class="nt-input" id="nt-dc-user" placeholder="You (the bot's owner)" autocomplete="off" spellcheck="false">
+                <div class="nt-hint">Leave empty to message the account that made the bot.</div>
+            </div>
+        </div>
+        <div class="nt-grid" id="nt-discord">
+            <div class="nt-field">
+                <label for="nt-dc-hook">Webhook URL</label>
+                <div class="nt-secret">
+                    <input class="nt-input" id="nt-dc-hook" type="password" autocomplete="new-password" spellcheck="false" placeholder="https://discord.com/api/webhooks/...">
+                    <button type="button" class="btn btn-secondary" data-toggle="nt-dc-hook">Show</button>
+                </div>
+                <div class="nt-hint">In Discord: the channel's <b>Edit Channel</b> &gt; <b>Integrations</b> &gt; <b>Webhooks</b> &gt; <b>New Webhook</b> &gt; <b>Copy Webhook URL</b>.</div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-dc-mention">Mention (optional)</label>
+                <input class="nt-input" id="nt-dc-mention" placeholder="None" autocomplete="off" spellcheck="false">
+                <div class="nt-hint">Added to high and max priority notifications: a user ID, <b>role:</b>role ID, <b>everyone</b> or <b>here</b>.</div>
+            </div>
+        </div>
+        <div class="nt-grid" id="nt-ntfy">
+            <div class="nt-field" id="nt-server-field">
+                <label for="nt-server">Server URL</label>
+                <div class="nt-inline">
+                    <input class="nt-input" id="nt-server" placeholder="https://ntfy.example.com" autocomplete="off" spellcheck="false">
+                    <button type="button" class="btn btn-secondary" id="nt-use-public">Use public server</button>
+                </div>
+                <div class="nt-hint">Your own ntfy server (hostname or IP, optional port), or the public ntfy.sh</div>
+                <div class="nt-public" id="nt-public-warn" style="display:none">
+                    Public server: anyone who knows or guesses your topic can read your notifications, including
+                    camera images, model previews and file names. Fine for testing; for everyday use, set up your own
+                    ntfy server.
+                </div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-topic">Topic (default)</label>
+                <div class="nt-inline">
+                    <input class="nt-input" id="nt-topic" placeholder="printer" maxlength="64" autocomplete="off" spellcheck="false">
+                    <button type="button" class="btn btn-secondary" id="nt-topic-random" title="Generate a long random topic">Random</button>
+                </div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-auth">Authentication</label>
+                <select class="nt-input" id="nt-auth">
+                    <option value="none">None</option>
+                    <option value="token">Access token</option>
+                    <option value="basic">Username &amp; password</option>
+                </select>
+            </div>
+            <div class="nt-field" id="nt-username-field">
+                <label for="nt-username">Username</label>
+                <input class="nt-input" id="nt-username" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="nt-field" id="nt-secret-field">
+                <label for="nt-secret" id="nt-secret-label">Access token</label>
+                <div class="nt-secret">
+                    <input class="nt-input" id="nt-secret" type="password" autocomplete="new-password" spellcheck="false">
+                    <button type="button" class="btn btn-secondary" data-toggle="nt-secret">Show</button>
+                </div>
+            </div>
+        </div>
+        </div>
+
+        <div class="nt-section">Email<a class="nt-guide" href="https://github.com/noon92/pushraker/blob/main/docs/guide.md#email" target="_blank">Guide</a></div>
+        <label class="nt-enable nt-sec"><input type="checkbox" id="nt-email-enabled"> Send email notifications</label>
+        <div class="nt-grid" id="nt-email">
+            <div class="nt-field">
+                <label for="nt-email-preset">Email provider</label>
+                <select class="nt-input" id="nt-email-preset">
+                    <option value="gmail">Gmail</option>
+                    <option value="brevo">Brevo</option>
+                    <option value="other">Other (SMTP)</option>
+                </select>
+                <div class="nt-hint" id="nt-email-hint"></div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-email-host">SMTP server and port</label>
+                <div class="nt-inline">
+                    <input class="nt-input" id="nt-email-host" placeholder="smtp.example.com" autocomplete="off" spellcheck="false">
+                    <input class="nt-input" id="nt-email-port" style="width:80px;flex:none" inputmode="numeric" autocomplete="off">
+                </div>
+                <select class="nt-input" id="nt-email-security" style="margin-top:6px">
+                    <option value="starttls">STARTTLS (usually port 587)</option>
+                    <option value="ssl">SSL/TLS (usually port 465)</option>
+                    <option value="none">None (unencrypted)</option>
+                </select>
+            </div>
+            <div class="nt-field">
+                <label for="nt-email-username">Username</label>
+                <input class="nt-input" id="nt-email-username" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="nt-field">
+                <label for="nt-email-password" id="nt-email-password-label">Password</label>
+                <div class="nt-secret">
+                    <input class="nt-input" id="nt-email-password" type="password" autocomplete="new-password" spellcheck="false">
+                    <button type="button" class="btn btn-secondary" data-toggle="nt-email-password">Show</button>
+                </div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-email-from">From</label>
+                <input class="nt-input" id="nt-email-from" placeholder="printer@example.com" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="nt-field">
+                <label for="nt-email-to">To</label>
+                <input class="nt-input" id="nt-email-to" placeholder="you@example.com" autocomplete="off" spellcheck="false">
+                <div class="nt-hint">Up to 5 addresses, separated by commas.</div>
+            </div>
+        </div>
+
+        <div class="nt-section">Webhook<a class="nt-guide" href="https://github.com/noon92/pushraker/blob/main/docs/guide.md#webhook" target="_blank">Guide</a></div>
+        <label class="nt-enable nt-sec"><input type="checkbox" id="nt-wh-enabled"> Send every notification to a webhook</label>
+        <div class="nt-grid" id="nt-webhook">
+            <div class="nt-field">
+                <label for="nt-wh-url">Webhook URL</label>
+                <div class="nt-secret">
+                    <input class="nt-input" id="nt-wh-url" type="password" autocomplete="new-password" spellcheck="false" placeholder="https://example.com/hook">
+                    <button type="button" class="btn btn-secondary" data-toggle="nt-wh-url">Show</button>
+                </div>
+                <div class="nt-hint">For Home Assistant, Node-RED, n8n or your own scripts. It gets every notification, whatever the Push and Email columns say.</div>
+            </div>
+            <div class="nt-field">
+                <label>What is sent</label>
+                <div class="nt-hint" style="margin-top:0">Each notification is POSTed as JSON: <code>title</code>, <code>message</code>, <code>type</code> (info, success, warning, failure), <code>event</code> (e.g. complete; use it to pick), <code>printer</code>, the links, and the image in <code>attachments</code> (base64).</div>
+            </div>
+        </div>
+
+        <div class="nt-section">Notification content</div>
+        <div class="nt-grid">
+            <div class="nt-field">
+                <label for="nt-name">Printer name <button type="button" class="nt-i pr-info" id="nt-name-info" data-info="" aria-label="About">?</button></label>
+                <input class="nt-input" id="nt-name" autocomplete="off">
+            </div>
+            <div class="nt-field">
+                <label for="nt-camera">Default camera</label>
+                <select class="nt-input" id="nt-camera"></select>
+                <div class="nt-warn" id="nt-camera-warn"></div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-tz">Time zone <button type="button" class="nt-i pr-info" data-info="By default, the time zone of the last browser to save this page. A template can set its own: {% set timezone = &quot;Europe/Warsaw&quot; %}." aria-label="About">?</button></label>
+                <select class="nt-input" id="nt-tz"></select>
+            </div>
+            <div class="nt-field" style="grid-column: 1 / -1">
+                <label for="nt-printer-url">Printer URL for buttons (optional)</label>
+                <div class="nt-fill-wrap">
+                    <div class="nt-inline">
+                        <input class="nt-input" id="nt-printer-url" placeholder="http://u1.home" autocomplete="off" spellcheck="false">
+                        <button type="button" class="btn btn-secondary" id="nt-fill" aria-haspopup="true" aria-expanded="false">Fill in ▾</button>
+                    </div>
+                    <div class="nt-fill-menu" id="nt-fill-menu" role="menu"></div>
+                </div>
+                <div class="nt-hint" id="nt-printer-url-hint"></div>
+                <div class="nt-public" id="nt-local-warn" style="display:none">
+                    Local IP detected - may not work when not on same network as printer.
+                </div>
+                <div class="nt-public" id="nt-tg-warn" style="display:none"></div>
+            </div>
+        </div>
+
+        <div class="nt-eta" id="nt-eta"><div class="nt-eta-lbl">Print time remaining estimation method</div><div class="nt-eta-opts" id="nt-eta-opts"></div></div>
+        <div class="nt-table-wrap">
+            <table class="nt-table" id="nt-table">
+                <thead>
+                    <tr><th>Notification</th><th class="nt-c nt-col-push">Push</th><th class="nt-c nt-col-email" id="nt-th-email">Email <button type="button" class="nt-i pr-info" id="nt-email-info" data-info="Email notifications are off. Turn on &quot;Send email notifications&quot; below to use this column." aria-label="About">?</button></th><th class="nt-data"></th></tr>
+                </thead>
+                <tbody id="nt-rows"></tbody>
+                <tbody id="nt-crows"></tbody>
+            </table>
+        </div>
+        <div class="nt-grid" id="nt-filament">
+            <div class="nt-field">
+                <label for="nt-fl-percent">🧵 Spool running low: alert when a spool is down to <button type="button" class="nt-i pr-info" id="nt-fl-info" data-info="Needs Spoolman to know how much filament each spool has left." data-guide="https://snapmakeru1-extended-firmware.pages.dev/spoolman" aria-label="About">?</button></label>
+                <div class="nt-inline nt-unit">
+                    <input class="nt-input" id="nt-fl-percent" type="number" min="0" max="90" inputmode="numeric">
+                    <span>% of a full spool</span>
+                </div>
+                <div class="nt-hint">0 turns this off.</div>
+            </div>
+            <div class="nt-field">
+                <label for="nt-fl-grams">Or to</label>
+                <div class="nt-inline nt-unit">
+                    <input class="nt-input" id="nt-fl-grams" type="number" min="0" max="5000" inputmode="numeric">
+                    <span>g, whichever comes first</span>
+                </div>
+                <div class="nt-hint">0 turns this off.</div>
+            </div>
+            <div class="nt-field" style="grid-column:1 / -1">
+                <label><input type="checkbox" id="nt-fl-unknown"> At print start, warn about a loaded spool that Spoolman shows at 0 g. Turn off if you don't track spool weights in Spoolman</label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="pr-error" id="pr-error" style="display:none"></div>
+<div class="nt-public" id="nt-stored-error" style="display:none; margin: 0 0 12px"></div>
+<div class="pr-actions">
+    <span class="pr-save-wrap">
+        <button type="button" class="btn btn-save" id="pr-save">Save &amp; Apply</button>
+        <span class="pr-safe" id="pr-safe">✓ Safe to save while printing</span>
+    </span>
+    <button type="button" class="btn btn-secondary" id="pr-test">Send Test</button>
+    <button type="button" class="btn btn-secondary" id="pr-close" disabled>Discard changes</button>
+    <span class="pr-status" id="pr-status"></span>
+</div>
+
+<div class="pr-modal pr-run" id="pr-run" role="dialog" aria-labelledby="pr-run-title">
+    <div class="pr-modal-box">
+        <h3 id="pr-run-title"></h3>
+        <div class="pr-run-msg" id="pr-run-msg"></div>
+        <div class="pr-console" id="pr-console"></div>
+        <div class="pr-buttons">
+            <button type="button" class="btn btn-secondary" id="pr-run-close" disabled>Close</button>
+        </div>
+    </div>
+</div>
+
+<div class="pr-modal pr-discard" id="pr-discard" role="alertdialog" aria-labelledby="pr-discard-title">
+    <div class="pr-modal-box">
+        <h3 id="pr-discard-title">⚠️ Discard changes?</h3>
+        <p>The settings go back to the last saved ones. The changes you made on this page will not be kept.</p>
+        <div class="pr-buttons">
+            <button type="button" class="btn btn-discard" id="pr-discard-yes" disabled>Discard changes</button>
+            <button type="button" class="btn btn-keep" id="pr-discard-no">Keep editing</button>
+        </div>
+    </div>
+</div>
+
+<div class="pr-modal pr-data" id="pr-data" role="dialog" aria-labelledby="pr-data-title">
+    <div class="pr-modal-box">
+        <h3 id="pr-data-title"></h3>
+        <div class="pr-data-grid">
+            <div class="pr-col-l">
+            <div class="pr-ed">
+                <div class="pr-custom" id="pr-custom" style="display:none">
+                    <div class="pr-lbl">Name</div>
+                    <label class="pr-prefixed" id="pr-cname-wrap"><span class="pr-prefix">pushraker.</span><input id="pr-cname" spellcheck="false" autocomplete="off" maxlength="32" placeholder="benchy_detected" aria-label="Name"></label>
+                    <div class="pr-lbl">When <button type="button" class="nt-i pr-info" data-info="A condition, checked every 5 seconds: sent when it turns true. Empty: sent only from G-code." data-guide="custom-notifications" aria-label="About">?</button></div>
+                    <textarea class="nt-input" id="pr-when" rows="2" spellcheck="false" autocomplete="off"></textarea>
+                    <div id="pr-cm-when"></div>
+                    <div class="pr-now" id="pr-now"></div>
+                    <div class="pr-repeat"><span>Send</span><select id="pr-repeat"><option value="change">each time it turns true (at most once a minute)</option><option value="job">once per print job</option><option value="job_pause">once per print job, resets after a pause</option><option value="minutes">at most every # minutes</option></select><span id="pr-rmin-wrap"># = <input type="number" id="pr-rmin" min="1" max="1440" inputmode="numeric"></span></div>
+                </div>
+                <div class="pr-lbl">Title</div>
+                <textarea class="nt-input pr-code" id="pr-t-title" rows="1" spellcheck="false" autocomplete="off"></textarea>
+                <div class="pr-lblrow"><div class="pr-lbl">Contents</div><span><span class="pr-rec" id="pr-cm-rec">Recommended: </span><button type="button" class="pr-link" id="pr-cm-link">Install CodeMirror</button></span></div>
+                <textarea class="nt-input" id="pr-data-text" spellcheck="false" autocomplete="off"></textarea>
+                <div id="pr-cm-host"></div>
+                <div class="pr-data-err" id="pr-data-err" style="display:none"></div>
+            </div>
+            <div class="pr-prevwrap">
+                <div class="pr-lbl">Preview</div>
+                <div class="pr-prev" id="pr-prev"></div>
+            </div>
+            </div>
+            <div class="pr-col-r">
+            <div class="pr-side">
+                <div class="pr-lbl">Jinja <a href="https://github.com/noon92/pushraker/blob/main/docs/guide.md#templates" target="_blank">Guide</a></div>
+                <div class="pr-jj" id="pr-jj">
+                    <span id="pr-blocks"><button type="button" class="pr-j" data-j="if">if</button><button type="button" class="pr-j" data-j="elif">elif</button><button type="button" class="pr-j" data-j="else">else</button><button type="button" class="pr-j" data-j="for">for each</button><button type="button" class="pr-j" data-j="set">set</button><button type="button" class="pr-j" data-j="comment">{# comment #}</button></span>
+                    <div class="pr-ops" id="pr-ops" style="display:none">
+                        <div class="pr-lbl">Compare</div>
+                        <button type="button" class="pr-j" data-op=" == ">==</button><button type="button" class="pr-j" data-op=" != ">!=</button><button type="button" class="pr-j" data-op=" > ">&gt;</button><button type="button" class="pr-j" data-op=" < ">&lt;</button><button type="button" class="pr-j" data-op=" >= ">&gt;=</button><button type="button" class="pr-j" data-op=" <= ">&lt;=</button><button type="button" class="pr-j" data-op="not ">not</button><button type="button" class="pr-j" data-op=" and ">and</button><button type="button" class="pr-j" data-op=" or ">or</button><button type="button" class="pr-j" data-op=" in ">in</button><button type="button" class="pr-j" data-op=" is defined">is defined</button><button type="button" class="pr-j" data-op='""'>"string"</button>
+                    </div>
+                </div>
+                <div class="pr-lbl">Objects</div>
+                <div class="pr-pick" id="pr-pick"><div class="pr-any">Loading the printer's objects…</div></div>
+            </div>
+            <div class="pr-imgwrap">
+                <div class="pr-lbl">Image <button type="button" class="nt-i pr-info" data-info="The image sent. A template can change it for one notification: {% set image = &quot;render&quot; %} (none, render, camera, graphic)." data-guide="images" aria-label="About">?</button></div>
+                <div class="pr-imgs" id="pr-imgs"></div>
+                <div class="pr-imgopts" id="pr-imgopts"></div>
+            </div>
+            <div class="pr-priowrap" id="pr-priowrap">
+                <div class="pr-lbl"><span>Priority</span> <button type="button" class="nt-i pr-info" id="pr-prio-info" data-info="" aria-label="About">?</button></div>
+                <select class="nt-input" id="pr-prio"></select>
+            </div>
+            <div class="pr-topicwrap" id="pr-topicwrap">
+                <div class="pr-lbl"><span id="pr-topic-lbl">Topic</span> <button type="button" class="nt-i pr-info" id="pr-topic-info" data-info="" aria-label="About">?</button></div>
+                <input class="nt-input pr-code" id="pr-topic" maxlength="64" spellcheck="false" autocomplete="off">
+            </div>
+            </div>
+        </div>
+        <div class="pr-buttons">
+            <div class="pr-block-pop" id="pr-block-pop" role="alert" style="display:none"></div>
+            <button type="button" class="btn btn-save" id="pr-data-ok">Save</button>
+            <span class="pr-gap"></span>
+            <button type="button" class="btn btn-secondary" id="pr-data-cancel">Cancel</button>
+            <button type="button" class="btn btn-remove" id="pr-data-delete" style="display:none">Delete</button>
+            <button type="button" class="btn btn-secondary" id="pr-data-reset">Reset</button>
+        </div>
+    </div>
+</div>
+
+<div class="pr-modal pr-cm" id="pr-cm" role="dialog" aria-labelledby="pr-cm-title">
+    <div class="pr-modal-box">
+        <h3 id="pr-cm-title"></h3>
+        <p>CodeMirror is a code editor for web pages. It replaces the template text box with one that has line numbers, colours for Jinja (values, tags, comments) and autocomplete for every value, filter and Jinja word. Templates work the same without it.</p>
+        <table>
+            <tr><td>Size</td><td id="pr-cm-size"></td></tr>
+            <tr><td>Printer storage</td><td id="pr-cm-free"></td></tr>
+            <tr><td>Version</td><td id="pr-cm-version"></td></tr>
+            <tr><td>Licence</td><td>MIT (<a id="pr-cm-licence" target="_blank">text</a>)</td></tr>
+            <tr><td>Project</td><td><a href="https://codemirror.net/" target="_blank">codemirror.net</a></td></tr>
+        </table>
+        <p class="pr-note">Downloaded from pushraker's release on GitHub and checked against the checksum this pushraker version expects. Upgrading pushraker updates it too. Removable at any time. Safe during a print job.</p>
+        <div class="pr-buttons" id="pr-cm-buttons"></div>
+        <div class="pr-cm-msg" id="pr-cm-msg"></div>
+        <div class="pr-console" id="pr-cm-log"></div>
+    </div>
+</div>
+
+<div class="pr-modal pr-discard" id="pr-reset" role="alertdialog" aria-labelledby="pr-reset-title">
+    <div class="pr-modal-box">
+        <h3 id="pr-reset-title">⚠️ Reset this notification?</h3>
+        <p id="pr-reset-text" style="white-space:pre-line"></p>
+        <div class="pr-buttons">
+            <button type="button" class="btn btn-discard" id="pr-reset-yes" disabled>Reset</button>
+            <button type="button" class="btn btn-keep" id="pr-reset-no">Keep editing</button>
+        </div>
+    </div>
+</div>
+
+<div class="pr-modal" id="pr-modal">
+    <div class="pr-modal-box">
+        <h3 id="pr-modal-title"></h3>
+        <p id="pr-modal-text"></p>
+        <div class="pr-buttons">
+            <button type="button" class="btn btn-secondary" id="pr-modal-no">Cancel</button>
+            <button type="button" class="btn btn-primary" id="pr-modal-yes">OK</button>
+        </div>
+    </div>
+</div>
+</div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+    const PRIORITY_LABELS = { min: 'Min', low: 'Low', default: 'Default', high: 'High', max: 'Max' };
+    const GROUP_LABELS = { chamber: 'Chamber temperature', fault: 'Faults', filaments: 'Filaments' };
+    const el = id => document.getElementById(id);
+    // The spool settings, moved under the filaments' rows on each render
+    const flBox = el('nt-filament');
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    let state = null;
+    let saved = '';             // the payload as last loaded or saved
+
+    // ---- Moonraker ------------------------------------------------------
+    // Same origin first (nginx proxies /server/ to Moonraker, as Fluidd's
+    // and Mainsail's setups do), else Moonraker's own port.
+    const bases = [''];
+    if (location.port !== '7125') bases.push(`${location.protocol}//${location.hostname}:7125`);
+    let base = null;
+
+    // Moonraker's authorization: a browser outside trusted_clients needs an
+    // API key (Fluidd: Settings > Authorization > API key), kept in this
+    // browser only
+    const apiKey = () => { try { return localStorage.getItem('pushraker.apiKey') || ''; } catch (e) { return ''; } };
+
+    async function api(path, method, body) {
+        const tries = base !== null ? [base] : bases;
+        let last;
+        for (const b of tries) {
+            try {
+                const headers = body ? { 'Content-Type': 'application/json' } : {};
+                if (apiKey()) headers['X-Api-Key'] = apiKey();
+                const r = await fetch(b + path, {
+                    method: method || 'GET',
+                    headers,
+                    body: body ? JSON.stringify(body) : undefined,
+                    credentials: 'same-origin'
+                });
+                const text = await r.text();
+                let data;
+                try { data = JSON.parse(text); } catch (e) { data = null; }
+                if (r.status === 404 && base === null && (!data || !data.error)) { last = new Error('not here'); continue; }
+                base = b;
+                if (r.status === 401 || r.status === 403) { const e = new Error('Moonraker needs an API key'); e.auth = true; throw e; }
+                if (!r.ok) {
+                    const msg = data && data.error && data.error.message ? data.error.message : `HTTP ${r.status}`;
+                    throw new Error(msg);
+                }
+                return data ? data.result : null;
+            } catch (e) {
+                if (base !== null) throw e;
+                last = e;
+            }
+        }
+        throw last || new Error('Moonraker not reachable');
+    }
+
+    // ---- small modal ----------------------------------------------------
+    function confirmModal(title, text, yesLabel) {
+        return new Promise(resolve => {
+            el('pr-modal-title').textContent = title;
+            el('pr-modal-text').textContent = text;
+            el('pr-modal-yes').textContent = yesLabel || 'OK';
+            el('pr-modal').classList.add('open');
+            const done = v => { el('pr-modal').classList.remove('open'); resolve(v); };
+            el('pr-modal-yes').onclick = () => done(true);
+            el('pr-modal-no').onclick = () => done(false);
+        });
+    }
+
+    // ---- rows -----------------------------------------------------------
+    function renderRows() {
+        let group = null;
+        if (flBox.parentNode) flBox.remove();    // kept across re-renders
+        el('nt-rows').innerHTML = state.meta.rows.map(meta => {
+            const row = state.rows[meta.id];
+            let html = '';
+            // Rows this printer can't produce and that are off (one turned
+            // on in pushraker.conf shows), and Spoolman's without Spoolman.
+            // A row left off isn't sent on save, so it keeps its setting.
+            if (meta.hidden || (meta.group === 'spoolman' && !state.meta.spoolman)) return html;
+            // Spoolman's and the backup spools' rows: one group, Spools
+            const g = ['spoolman', 'refill', 'filament'].includes(meta.group) ? 'filaments' : meta.group;
+            if (g !== group) {
+                group = g;
+                if (GROUP_LABELS[group]) {
+                    html += `<tr class="nt-group"><td colspan="4">${GROUP_LABELS[group]}</td></tr>`;
+                }
+            }
+            const layer = meta.id === 'first_layer'
+                ? `<select class="nt-input nt-layer" id="nt-layers">${[1, 2, 3].map(n =>
+                    `<option value="${n}"${n === state.layers_complete ? ' selected' : ''}>${['1st', '2nd', '3rd'][n - 1]}</option>`).join('')}</select>`
+                : '';
+            // Print-by-object: layer complete and print complete for each
+            // object, or once per print job
+            const byObject = { first_layer: ['nt-layer-objects', state.first_layer_objects],
+                               complete: ['nt-complete-objects', state.complete_objects] }[meta.id];
+            const objects = byObject
+                ? `<span class="nt-sub">Print-by-object mode: <select class="nt-input nt-layer" id="${byObject[0]}">${[['each', 'once per object'], ['once', 'once per print job']].map(([v, t]) =>
+                    `<option value="${v}"${v === byObject[1] ? ' selected' : ''}>${t}</option>`).join('')}</select><span class="nt-needs" data-needs="${byObject[0]}"${byObject[1] === 'each' ? '' : ' style="display:none"'}>. Needs <b>Exclude objects</b> enabled in the slicer</span></span>`
+                : '';
+            const driver = meta.id === 'driver_hot'
+                ? `<span class="nt-sub">X or Y driver over <input class="nt-input nt-layer nt-deg" id="nt-driver-hot" type="number" min="40" max="150" inputmode="numeric" value="${state.driver_temp}"> °C</span>`
+                : '';
+            const marks = meta.id === 'progress'
+                ? `<span class="nt-sub">${(state.meta.progress_marks || [25, 50, 75]).map(m =>
+                    `<label style="margin-right:12px; white-space:nowrap"><input type="checkbox" id="nt-pm-${m}"${progressMarks().includes(m) ? ' checked' : ''}> ${m}%</label>`).join('')}</span>`
+                : '';
+            const report = meta.id === 'status_report'
+                ? `<span class="nt-sub">Every <input class="nt-input nt-layer nt-deg" id="nt-report-interval" type="number" min="5" max="720" inputmode="numeric" value="${state.report_interval}"> minutes of print time (a pause stops the clock)</span>`
+                : '';
+            const calib = meta.id === 'calibration'
+                ? '<span class="nt-sub">Notifies when complete, failed or requires user intervention</span>'
+                : meta.id === 'preprint_done'
+                ? '<span class="nt-sub">The calibrations chosen when the print job started</span>'
+                : meta.id === 'filament_change'
+                ? `<span class="nt-sub"><label style="margin-right:12px"><input type="checkbox" id="nt-fc-loaded"${state.filament_change_events.includes('loaded') ? ' checked' : ''}> Loaded</label><label><input type="checkbox" id="nt-fc-unloaded"${state.filament_change_events.includes('unloaded') ? ' checked' : ''}> Unloaded</label></span>`
+                : meta.id === 'chamber_waiting'
+                ? '<span class="nt-sub">When a print job waits for a target chamber temperature</span>'
+                : meta.id === 'chamber_fault'
+                ? '<span class="nt-sub">Timed out, not heating, chamber heater faults</span>'
+                : meta.id === 'spool_switch'
+                ? '<span class="nt-sub">The printer\'s refill from another toolhead, or multiACE\'s Quad Replenish from another slot</span>'
+                : meta.id === 'slot_empty'
+                ? '<span class="nt-sub">multiACE only: the slot feeding a toolhead ran out; the toolhead prints what is left in the filament path</span>'
+                : meta.id === 'paused'
+                ? '<span class="nt-sub">A pause the print job\'s file asks for is sent at the highest priority (set in its template)</span>'
+                : meta.id === 'macro'
+                    ? '<span class="nt-sub"><code>RESPOND PREFIX=notify MSG="Title || Message || priority"</code> (priority optional)</span>'
+                    : '';
+            return html + `<tr data-row="${meta.id}">
+                <td><span class="nt-icon">${meta.icon}</span>${layer ? `${layer} <span class="nt-name">layer complete</span>` : `<span class="nt-name">${esc(meta.label)}</span>`}${objects}${marks}${driver}${report}${calib}<span class="nt-sub nt-data-inline"><span class="nt-dim">${editButton(meta.id)}</span></span></td>
+                <td class="nt-c nt-col-push"><input type="checkbox" data-enabled="${meta.id}"${row.enabled ? ' checked' : ''}></td>
+                <td class="nt-c nt-col-email"><input type="checkbox" data-email="${meta.id}"${row.email ? ' checked' : ''}></td>
+                <td class="nt-data"><span class="nt-dim">${editButton(meta.id)}</span></td>
+            </tr>`;
+        }).join('');
+        el('nt-rows').querySelectorAll('[data-enabled], [data-email]').forEach(cb => {
+            cb.onchange = updateRowDimming;
+        });
+        // "once per object": what it needs, next to it
+        el('nt-rows').querySelectorAll('[data-needs]').forEach(n => {
+            const sel = el(n.dataset.needs);
+            sel.addEventListener('change', () => { n.style.display = sel.value === 'each' ? '' : 'none'; });
+        });
+        // The spool settings: under the filaments' rows
+        const filRows = state.meta.rows.filter(m => ['spoolman', 'refill', 'filament'].includes(m.group))
+            .map(m => el('nt-rows').querySelector(`tr[data-row="${m.id}"]`)).filter(Boolean);
+        const flRow = document.createElement('tr');
+        flRow.className = 'nt-fl-row';
+        flRow.innerHTML = '<td colspan="4"></td>';
+        flRow.firstChild.appendChild(flBox);
+        if (filRows.length) filRows[filRows.length - 1].after(flRow);
+        else el('nt-rows').appendChild(flRow);
+        wireEditButtons();
+        updateRowDimming();
+    }
+
+    // Custom notifications' rows, and ➕ Add
+    function renderCustomRows() {
+        const max = state.meta.custom_max || 20;
+        el('nt-crows').innerHTML = `<tr class="nt-group"><td colspan="4">Custom</td></tr>` + customs.map(c => {
+            const id = c._id;
+            const when = c.when.trim()
+                ? `<span class="nt-sub">When <code>${esc(c.when.length > 70 ? c.when.slice(0, 70) + '…' : c.when)}</code></span>`
+                : '<span class="nt-sub">Sent only from G-code</span>';
+            return `<tr class="nt-crow" data-crow="${id}">
+                <td><span class="nt-icon">🔔</span><span class="nt-name">${esc(c.name)}</span>${when}<span class="nt-sub nt-data-inline"><span class="nt-dim"><button type="button" class="btn btn-secondary nt-data-btn" data-ctpl="${id}">Edit</button></span></span></td>
+                <td class="nt-c nt-col-push"><input type="checkbox" data-cenabled="${id}"${c.enabled ? ' checked' : ''}></td>
+                <td class="nt-c nt-col-email"><input type="checkbox" data-cemail="${id}"${c.email ? ' checked' : ''}></td>
+                <td class="nt-data"><span class="nt-dim"><button type="button" class="btn btn-secondary nt-data-btn" data-ctpl="${id}">Edit</button></span><button type="button" class="nt-x" data-cdel="${id}" aria-label="Delete">✕</button></td>
+            </tr>`;
+        }).join('') + (customs.length < max
+            ? '<tr class="nt-add"><td colspan="4"><button type="button" class="btn btn-secondary nt-data-btn" id="nt-add-custom">➕ Add custom notification</button></td></tr>' : '');
+        const rows = el('nt-crows');
+        rows.querySelectorAll('[data-cenabled]').forEach(b => { b.onchange = () => { customById(Number(b.dataset.cenabled)).enabled = b.checked; updateRowDimming(); }; });
+        rows.querySelectorAll('[data-cemail]').forEach(b => { b.onchange = () => { customById(Number(b.dataset.cemail)).email = b.checked; updateRowDimming(); }; });
+        rows.querySelectorAll('[data-ctpl]').forEach(b => { b.onclick = e => { e.preventDefault(); openEditor('custom:' + b.dataset.ctpl); }; });
+        rows.querySelectorAll('[data-cdel]').forEach(b => { b.onclick = async e => { e.preventDefault(); await deleteCustom(customById(Number(b.dataset.cdel))); }; });
+        if (el('nt-add-custom')) el('nt-add-custom').onclick = e => {
+            e.preventDefault();
+            draft = Object.assign({ _id: ++customSeq, _saved: null, name: '' }, JSON.parse(JSON.stringify(state.meta.custom_default)));
+            openEditor('custom:' + draft._id);
+        };
+        updateRowDimming();
+    }
+
+    // ---- time-left method -------------------------------------------------
+    // Radio buttons: the printer's default first, then the rest, each with
+    // an (i) that opens the method's explanation
+    function renderTimeMethods() {
+        const methods = (state.meta.time_methods || []).slice();
+        const def = state.meta.time_default;
+        methods.sort((a, b) => (a.id === def ? -1 : b.id === def ? 1 : a.label.localeCompare(b.label)));
+        const chosen = state.time_left || def;
+        el('nt-eta-opts').innerHTML = methods.map(m =>
+            `<label><input type="radio" name="nt-time" value="${esc(m.id)}"${m.id === chosen ? ' checked' : ''}> ${esc(m.label)}${m.id === def ? ' <span class="nt-eta-def">(default)</span>' : ''} <button type="button" class="nt-i" data-tip="${esc(m.id)}" aria-label="About ${esc(m.label)}">?</button><div class="nt-tip" data-tip-for="${esc(m.id)}"><b>${esc(m.label)}</b> — ${esc(m.help)} <code>{{ job.time.remaining.${esc(m.id)} }}</code></div></label>`).join('');
+        const tips = el('nt-eta-opts');
+        const closeTips = () => { tips.querySelectorAll('.nt-tip.open').forEach(t => t.classList.remove('open')); tips.querySelectorAll('.nt-i.on').forEach(i => i.classList.remove('on')); };
+        tips.querySelectorAll('.nt-i').forEach(b => {
+            const tip = tips.querySelector(`.nt-tip[data-tip-for="${b.dataset.tip}"]`);
+            const open = () => { closeTips(); tip.classList.add('open'); b.classList.add('on'); };
+            // Hover opens it on a computer; a click (a tap on a phone)
+            // toggles it, and never selects the radio button
+            b.onclick = e => { e.preventDefault(); e.stopPropagation(); if (tip.classList.contains('open') && !matchMedia('(hover: hover)').matches) closeTips(); else open(); };
+            b.onmouseenter = () => { if (matchMedia('(hover: hover)').matches) open(); };
+            b.onmouseleave = () => { if (matchMedia('(hover: hover)').matches) closeTips(); };
+        });
+        tips.querySelectorAll('.nt-tip').forEach(t => { t.onclick = e => e.stopPropagation(); });
+        document.addEventListener('click', closeTips);
+    }
+    const timeMethod = () => { const r = document.querySelector('input[name="nt-time"]:checked'); return r ? r.value : (state.time_left || ''); };
+
+    // ---- notification templates ------------------------------------------
+    // Each notification's title, contents (Jinja) and image. Only what
+    // differs from the default is kept (tplEdits); the rest follows the
+    // default, also after an upgrade. Edited in a popup.
+    const progressMarks = () => String(state.progress_marks || '').split(',').map(Number).filter(Boolean);
+    let tplEdits = {};
+    let savedTpl = '{}';
+    const TPL_FIELDS = ['title', 'contents', 'image', 'camera', 'remaining', 'topic'];
+    // Custom notifications: the page's copy (_id: this page's, _saved: the
+    // name as saved, null for a new one)
+    let customs = [];
+    let savedCustoms = '{}';
+    let customSeq = 0;
+    let draft = null;       // a new one, until Done
+    const CUSTOM_FIELDS = ['name', 'enabled', 'priority', 'email', 'when', 'title', 'contents', 'image', 'camera', 'topic', 'repeat', 'repeat_minutes'];
+    const RX_CUSTOM_NAME = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
+    const isCustom = key => String(key).startsWith('custom:');
+    const customById = id => customs.find(c => c._id === id) || (draft && draft._id === id ? draft : null);
+    const pickCustom = c => { const o = {}; CUSTOM_FIELDS.forEach(f => { o[f] = c[f]; }); return o; };
+    function tplMeta(key) {
+        if (isCustom(key)) {
+            const c = customById(Number(key.slice(7)));
+            if (!c) return null;
+            return { key, row: null, label: c.name || 'New custom notification', images: ['none', 'render', 'camera'], default: state.meta.custom_default };
+        }
+        return (state.meta.templates || []).find(t => t.key === key);
+    }
+    function effective(key) {
+        if (isCustom(key)) return pickCustom(customById(Number(key.slice(7))));
+        return Object.assign({}, tplMeta(key).default, tplEdits[key] || {});
+    }
+    function diffFromDefault(key, t) {
+        const d = tplMeta(key).default, out = {};
+        TPL_FIELDS.forEach(f => { if (t[f] !== d[f]) out[f] = t[f]; });
+        return out;
+    }
+    const isEdited = key => !isCustom(key) && !!tplEdits[key] && Object.keys(tplEdits[key]).length > 0;
+    // Edit, with a red * when the notification is edited
+    function editButton(key, mini, label) {
+        if (!tplMeta(key)) return '';
+        const mark = isEdited(key) ? '<span class="nt-ast red">*</span>' : '';
+        return `${label ? ` <span class="nt-dim">${esc(label)}:</span>` : ''}<button type="button" class="btn btn-secondary ${mini ? 'nt-mini' : 'nt-data-btn'}" data-tpl="${key}">Edit${mark}</button>`;
+    }
+    function wireEditButtons() {
+        el('nt-rows').querySelectorAll('[data-tpl]').forEach(b => {
+            b.onclick = e => { e.preventDefault(); openEditor(b.dataset.tpl); };
+        });
+    }
+    function refreshEditButtons() {
+        el('nt-rows').querySelectorAll('[data-tpl]').forEach(b => {
+            const key = b.dataset.tpl;
+            b.innerHTML = 'Edit' + (isEdited(key) ? '<span class="nt-ast red">*</span>' : '');
+        });
+    }
+
+    // -- the picker: a tree, named as Klipper (or pushraker) names things.
+    // An entry with more under it (or formats to pick from) has an arrow;
+    // blue entries insert when clicked.
+    const catalogues = {};
+    async function loadCatalogue(key) {
+        if (catalogues[key]) return catalogues[key];
+        try {
+            const r = await api('/server/pushraker/objects?key=' + encodeURIComponent(key));
+            catalogues[key] = (r && r.categories) || [];
+        } catch (e) {
+            catalogues[key] = [];
+        }
+        return catalogues[key];
+    }
+    const FMT_INFO = {
+        decimals: 'Decimal places: Jinja\'s round().',
+        percent: '|pct: a 0-1 value as a percentage.',
+        time: 'D days, H hours, M minutes, any case; doubled = two digits. The largest one carries the total. Other words print as typed. Type your own pattern in the quotes.',
+        names: 'Toolhead names by number (from 1): # is the number. Type your own pattern in the quotes.'
+    };
+    function fmtKind(formats) {
+        if (formats.some(f => /^\|duration|^\|clock/.test(f.filter || ''))) return 'time';
+        if (formats.some(f => /^\|toolhead/.test(f.filter || ''))) return 'names';
+        if (formats.some(f => f.fmt === 'line')) return 'list';
+        if (formats.some(f => f.fmt === 'pct')) return 'percent';
+        return 'decimals';
+    }
+    function infoButton(text, guide) {
+        return text ? ` <button type="button" class="nt-i pr-info" data-info="${esc(text)}"${guide ? ` data-guide="${esc(guide)}"` : ''} aria-label="About">?</button>` : '';
+    }
+    function nodeHtml(n, depth) {
+        const pad = 10 + depth * 16;
+        const opens = !!(n.children || n.formats);
+        const leaf = !opens && n.expr;
+        const hint = n.hint ? ` <small>${esc(n.hint)}</small>` : '';
+        let html = `<div class="pr-row${leaf ? ' pr-leaf' : ''}" style="padding-left:${pad}px" data-node>` +
+            `<span class="pr-ar">${opens ? '▸' : ''}</span><code>${esc(n.name)}</code>${hint}${infoButton(n.info)}</div>`;
+        if (opens) {
+            html += `<div class="pr-kids" style="display:none">`;
+            if (n.children) html += n.children.map(k => nodeHtml(k, depth + 1)).join('');
+            if (n.formats) {
+                const kind = fmtKind(n.formats);
+                html += `<div class="pr-fmt" style="padding-left:${pad + 16}px"><div class="pr-lbl">${kind === 'decimals' ? 'Decimals' : kind === 'percent' ? 'Shown as' : 'Format'}${infoButton(FMT_INFO[kind])}</div>` +
+                    n.formats.map(f => `<button type="button" class="pr-f" data-expr="${esc(n.expr)}" data-filter="${esc(f.filter || '')}"${n.placeholder ? ' data-ph="1"' : ''}>${esc(f.label)}<small>${f.filter ? esc(f.filter) : 'default'}</small></button>`).join('') +
+                    (n.degree ? '<button type="button" class="pr-deg">°C</button>' : '') + '</div>';
+            }
+            html += '</div>';
+        }
+        return html.replace('data-node>', leaf ? `data-node data-expr="${esc(n.expr)}"${n.placeholder ? ' data-ph="1"' : ''}>` : 'data-node>');
+    }
+    // What a loop goes through, and the values of each item in it
+    const LOOP_FIELDS = {
+        'job.filaments': ['name', 'material', 'color', 'vendor', 'grams', 'extruder', 'slot', 'nozzle_temperature', 'nozzle_diameter', 'bed_temperature'],
+        'job.queue': ['name', 'time', 'eta', 'grams', 'meters', 'materials'],
+        'job.pauses': ['layer', 'message', 'kind'],
+        'extruders': ['name', 'temperature', 'target', 'power', 'nozzle_diameter', 'filament.name', 'filament.material', 'filament.color', 'filament.vendor', 'filament.grams_left', 'slot'],
+        'event.issues': ['label', 'extruder', 'name', 'spool_id', 'status', 'grams_left', 'grams_full', 'grams_needed', 'enough', 'refill', 'refill_exact', 'backups', 'together.grams', 'together.status', 'together.unknown', 'quad_replenish.on', 'quad_replenish.where', 'blockers'],
+        'event.drivers': ['name', 'temperature', 'hot'],
+        'event.next': ['label', 'slot', 'name'],
+        '.backups': ['label', 'ace', 'extruder', 'slot', 'name', 'spool_id', 'grams_left', 'grams_full', 'also_needed', 'exact'],
+        '.blockers': ['extruder', 'reason']
+    };
+    // The loop the cursor is in: {% for x in list %} ... {% endfor %}
+    function loopAt(text, pos) {
+        const re = /\{%-?\s*(for\s+(\w+)\s+in\s+([^%]+?)|endfor)\s*-?%\}/g;
+        const stack = [];
+        let m;
+        while ((m = re.exec(text)) && m.index < pos) {
+            if (m[1] === 'endfor') stack.pop();
+            else stack.push({ name: m[2], list: m[3].split('|')[0].trim() });
+        }
+        return stack.length ? stack[stack.length - 1] : null;
+    }
+    function loopFields(list) {
+        // What the tree says each item has (event.* lists)
+        let found = null;
+        const walk = n => { if (n.expr === list && n.item) found = n.item; (n.children || []).forEach(walk); };
+        const ck = editing ? (isCustom(editing.key) ? 'custom' : editing.key) : '';
+        (catalogues[ck] || []).forEach(c => (c.children || []).forEach(walk));
+        if (found) return found;
+        if (LOOP_FIELDS[list]) return LOOP_FIELDS[list];
+        const k = Object.keys(LOOP_FIELDS).find(k => k.startsWith('.') && list.endsWith(k));
+        return k ? LOOP_FIELDS[k] : [];
+    }
+    function renderLoop() {
+        const box = el('pr-loop');
+        if (!box || !editing) return;
+        const f = field();
+        const loop = f && f.isContents ? loopAt(f.get(), f.sel()[0]) : null;
+        const fields = loop ? loopFields(loop.list) : [];
+        if (!loop) { box.innerHTML = ''; return; }
+        const LOOP_INFO = [['loop.index', 'which item, from 1'], ['loop.first', 'the first item'], ['loop.last', 'the last item']];
+        box.innerHTML = `<div class="pr-row pr-cat pr-loop"><span class="pr-ar">▾</span>🔁 This loop: <code>${esc(loop.name)}</code> <small>each of ${esc(loop.list)}</small></div>` +
+            (fields.length ? fields.map(k => `<div class="pr-row pr-leaf" style="padding-left:26px" data-loop="${esc(loop.name + '.' + k)}"><span class="pr-ar"></span><code>${esc(k)}</code></div>`).join('')
+                : `<div class="pr-row pr-leaf" style="padding-left:26px" data-loop="${esc(loop.name)}"><span class="pr-ar"></span><code>${esc(loop.name)}</code></div>`) +
+            LOOP_INFO.map(([k, h]) => `<div class="pr-row pr-leaf" style="padding-left:26px" data-loop="${k}"><span class="pr-ar"></span><code>${k}</code> <small>${h}</small></div>`).join('');
+        box.querySelectorAll('[data-loop]').forEach(r => { r.onclick = () => insertValue(r.dataset.loop, ''); });
+    }
+    function renderPicker(cats) {
+        const pick = el('pr-pick');
+        if (!cats.length) {
+            pick.innerHTML = '<div class="pr-any">The printer\'s objects could not be listed (is Klipper running?). Type any <code>{{ printer.object.field }}</code>.</div>';
+            return;
+        }
+        pick.innerHTML = '<div id="pr-loop"></div>' + cats.map(c =>
+            `<div class="pr-row pr-cat" data-node><span class="pr-ar">▸</span>${esc(c.label)}${c.hint ? ` <small>${esc(c.hint)}</small>` : ''}${infoButton(c.info, c.guide)}</div>` +
+            `<div class="pr-kids" style="display:none">${c.children.map(n => nodeHtml(n, 1)).join('')}</div>`).join('') +
+            '<div class="pr-any">Or type any <code>{{ printer.object.field }}</code>: <a href="https://www.klipper3d.org/Status_Reference.html" target="_blank">Klipper status reference</a> · <a href="' + GUIDE + '#templates" target="_blank">Guide</a></div>';
+        pick.querySelectorAll('[data-node]').forEach(row => {
+            row.onclick = e => {
+                if (e.target.closest('a')) return;
+                if (e.target.closest('.pr-info')) return;
+                if (row.dataset.expr) { insertValue(row.dataset.expr, '', !!row.dataset.ph); return; }
+                const kids = row.nextElementSibling;
+                if (!kids || !kids.classList.contains('pr-kids')) return;
+                const open = kids.style.display === 'none';
+                kids.style.display = open ? '' : 'none';
+                row.querySelector('.pr-ar').textContent = open ? '▾' : '▸';
+                row.classList.toggle('pr-sel', open && !!kids.querySelector(':scope > .pr-fmt'));
+            };
+        });
+        wireTips(pick);
+        pick.onscroll = hideTip;
+        pick.querySelectorAll('.pr-deg').forEach(b => { b.onclick = () => insertText('°C'); });
+        pick.querySelectorAll('.pr-f').forEach(b => {
+            b.onclick = () => insertValue(b.dataset.expr, b.dataset.filter, !!b.dataset.ph);
+        });
+        renderLoop();
+    }
+    // (i): a tooltip on hover (computer); a click or tap keeps it open,
+    // and the next click or tap anywhere closes it and does what it does
+    const tipBox = document.createElement('div');
+    tipBox.className = 'pr-tip';
+    document.body.append(tipBox);
+    let tipPinned = null, tipShown = null;
+    function showTip(btn) {
+        tipBox.textContent = btn.dataset.info;
+        if (btn.dataset.guide) {
+            const a = document.createElement('a');
+            // An anchor in pushraker's guide, or a page elsewhere
+            a.href = /^https?:/.test(btn.dataset.guide) ? btn.dataset.guide : `${GUIDE}#${btn.dataset.guide}`;
+            a.target = '_blank';
+            a.textContent = 'Guide';
+            tipBox.append(a);
+        }
+        tipBox.style.display = 'block';
+        const r = btn.getBoundingClientRect(), w = tipBox.offsetWidth, h = tipBox.offsetHeight;
+        tipBox.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+        tipBox.style.top = (r.bottom + 6 + h > innerHeight ? r.top - h - 6 : r.bottom + 6) + 'px';
+        if (tipShown) tipShown.classList.remove('on');
+        tipShown = btn;
+        btn.classList.add('on');
+    }
+    function hideTip() {
+        tipBox.style.display = 'none';
+        if (tipShown) tipShown.classList.remove('on');
+        tipShown = tipPinned = null;
+    }
+    document.addEventListener('click', e => {
+        if (!e.target.closest('.pr-info') && !e.target.closest('.pr-tip')) hideTip();
+    }, true);
+    function wireTips(root) {
+        root.querySelectorAll('.pr-info').forEach(b => {
+            b.onmouseenter = () => { if (matchMedia('(hover: hover)').matches && !tipPinned) showTip(b); };
+            b.onmouseleave = () => { if (!tipPinned) hideTip(); };
+            b.onclick = e => {
+                e.stopPropagation();
+                if (tipPinned === b) { hideTip(); return; }
+                showTip(b);
+                tipPinned = b;
+            };
+        });
+    }
+    wireTips(document.querySelector('.pr-imgwrap'));
+    wireTips(el('pr-custom'));
+    wireTips(document.querySelector('.nt-body'));
+
+    // -- the two text fields: the title (a line) and the contents (a text
+    // box, or CodeMirror when installed); values go to the one last used
+    let activeField = 'contents';
+    let cmView = null, whenView = null;
+    let filling = false;        // fillEditor setting the fields: no change events
+    // A new custom notification's examples, shown while its fields are empty
+    const PH_WHEN = '"benchy" or "Benchy" in job.file';
+    const PH_CONTENTS = '🚢 Benchy McBenchface{% if job.objects.count >= 2 %}s{% endif %}, coming through! ⛵';
+    const phSpan = { when: document.createElement('span'), contents: document.createElement('span') };
+    function setPlaceholders(custom) {
+        phSpan.when.textContent = PH_WHEN;
+        phSpan.contents.textContent = custom ? PH_CONTENTS : '';
+        el('pr-when').placeholder = PH_WHEN;
+        el('pr-data-text').placeholder = custom ? PH_CONTENTS : '';
+    }
+    function textareaField(t, isContents) {
+        return {
+            isContents,
+            get: () => t.value,
+            set: v => { t.value = v; },
+            sel: () => [t.selectionStart || 0, t.selectionEnd || 0],
+            replace: (a, z, text, s0, s1) => {
+                t.value = t.value.slice(0, a) + text + t.value.slice(z);
+                t.focus();
+                t.setSelectionRange(s0, s1);
+            },
+            focus: () => t.focus()
+        };
+    }
+    function cmField(view, isContents) {
+        return {
+            isContents: isContents !== false,
+            get: () => view.state.doc.toString(),
+            set: v => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: v } }),
+            sel: () => [view.state.selection.main.from, view.state.selection.main.to],
+            replace: (a, z, text, s0, s1) => {
+                view.dispatch({ changes: { from: a, to: z, insert: text }, selection: { anchor: s0, head: s1 } });
+                view.focus();
+            },
+            focus: () => view.focus()
+        };
+    }
+    function field(which) {
+        which = which || activeField;
+        if (which === 'title') return textareaField(el('pr-t-title'), false);
+        if (which === 'when') return whenView ? cmField(whenView, false) : textareaField(el('pr-when'), false);
+        return cmView ? cmField(cmView) : textareaField(el('pr-data-text'), true);
+    }
+    // Where the cursor is: in {{ }}, in {% %}, or in plain text
+    function tagAt(v, a) {
+        const o1 = v.lastIndexOf('{{', a - 1), c1 = v.lastIndexOf('}}', a - 1);
+        const o2 = v.lastIndexOf('{%', a - 1), c2 = v.lastIndexOf('%}', a - 1);
+        const inExpr = o1 >= 0 && o1 > c1, inStmt = o2 >= 0 && o2 > c2;
+        if (inExpr && (!inStmt || o1 > o2)) return { kind: 'expr', at: o1 };
+        if (inStmt) return { kind: 'stmt', at: o2 };
+        return null;
+    }
+    function insertText(text, selectFrom, selectLen) {
+        const f = field();
+        const v = f.get();
+        let [a, z] = f.sel();
+        const tag = activeField === 'when' ? null : tagAt(v, a);
+        // Never inside a {{ value }}: after its }} (just after typing a
+        // filament number, say)
+        if (tag && tag.kind === 'expr' && a === z) {
+            const end = v.indexOf('}}', a);
+            if (end >= 0) a = z = end + 2;
+        }
+        const s0 = selectFrom !== undefined ? a + selectFrom : a + text.length;
+        const s1 = selectFrom !== undefined ? s0 + selectLen : s0;
+        f.replace(a, z, text, s0, s1);
+        editorChanged();
+    }
+    // A value: {{ value|filter }}, or bare inside a {% %} tag (an if's
+    // condition); one holding # is inserted with the # selected, so typing
+    // the number replaces it
+    function insertValue(expr, filter, placeholder) {
+        const f = field();
+        const tag = tagAt(f.get(), f.sel()[0]);
+        // A condition (When, an if) takes the value bare
+        const text = activeField === 'when' || (tag && tag.kind === 'stmt') ? `${expr}${filter || ''}` : `{{ ${expr}${filter || ''} }}`;
+        const at = placeholder ? text.indexOf('#') : -1;
+        if (at >= 0) insertText(text, at, 1); else insertText(text);
+    }
+    // The Jinja buttons; Compare only shows in an if's or elif's condition
+    function lineStart(f) {
+        const v = f.get(), a = f.sel()[0];
+        return /^\s*$/.test(v.slice(v.lastIndexOf('\n', a - 1) + 1, a));
+    }
+    function jinjaButton(kind) {
+        const f = field();
+        // Inside a {{ }} or {% %}: the block goes after it
+        const v = f.get(), tag = tagAt(v, f.sel()[0]);
+        if (tag) {
+            const end = v.indexOf(tag.kind === 'expr' ? '}}' : '%}', f.sel()[0]);
+            if (end >= 0) f.replace(end + 2, end + 2, '', end + 2, end + 2);
+        }
+        const ls = lineStart(f);
+        const blocks = {
+            if: ls ? ['{% if  %}\n{% endif %}', 6] : ['{% if  %}{% endif %}', 6],
+            elif: ls ? ['{% elif  %}\n', 8] : ['{% elif  %}', 8],
+            else: ls ? ['{% else %}\n', 11] : ['{% else %}', 10],
+            for: ls ? ['{% for item in  %}\n{% endfor %}', 15] : ['{% for item in  %}{% endfor %}', 15],
+            set: ['{% set  =  %}', 7],
+            comment: ['{#  #}', 3]
+        }[kind];
+        insertText(blocks[0], blocks[1], 0);
+    }
+    function updateJinjaPane() {
+        const f = field();
+        const v = f.get(), a = f.sel()[0];
+        const tag = tagAt(v, a);
+        const when = activeField === 'when';
+        const inCond = when || (!!tag && tag.kind === 'stmt' && /^\{%-?\s*(if|elif)\b/.test(v.slice(tag.at)));
+        el('pr-ops').style.display = inCond ? '' : 'none';
+        // When is one condition: no blocks in it
+        el('pr-blocks').style.display = when ? 'none' : '';
+        renderLoop();
+    }
+    el('pr-jj').querySelectorAll('[data-j]').forEach(b => { b.onmousedown = e => e.preventDefault(); b.onclick = () => jinjaButton(b.dataset.j); });
+    el('pr-jj').querySelectorAll('[data-op]').forEach(b => {
+        b.onmousedown = e => e.preventDefault();
+        b.onclick = () => (b.dataset.op === '""' ? insertText('""', 1, 0) : insertText(b.dataset.op));
+    });
+
+    // -- the editor
+    let editing = null;      // { key, title, contents, image, camera, remaining }
+    let previewTimer = null, previewSeq = 0, previewError = null;
+    const imgCache = {};
+    const imgWhy = {};          // why a picture is missing, by the same id
+    const camWhy = t => imgWhy['camera:' + (t.camera || el('nt-camera').value)];
+    function growTitle() {
+        const t = el('pr-t-title');
+        t.style.height = 'auto';
+        t.style.height = (t.scrollHeight + 2) + 'px';
+    }
+    function editorChanged() {
+        if (!editing || filling) return;
+        const before = FIELDS.map(f => editing[f]);
+        el('pr-block-pop').style.display = 'none';
+        growTitle();
+        if (isCustom(editing.key)) {
+            // pushraker. is in front of the box already: a pasted one goes
+            const nm = el('pr-cname');
+            if (/^pushraker\./i.test(nm.value)) nm.value = nm.value.replace(/^pushraker\./i, '');
+            editing.name = nm.value.trim();
+            editing.when = field('when').get();
+            editing.repeat = el('pr-repeat').value;
+            editing.repeat_minutes = Math.max(1, Math.min(1440, parseInt(el('pr-rmin').value, 10) || 10));
+            el('pr-rmin-wrap').style.display = editing.repeat === 'minutes' ? '' : 'none';
+            el('pr-data-title').textContent = editing.name || 'New custom notification';
+        }
+        editing.title = el('pr-t-title').value;
+        editing.contents = field('contents').get();
+        FIELDS.forEach((f, i) => { if (editing[f] !== before[i]) touched.add(f); });
+        updateJinjaPane();
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(preview, 400);
+    }
+    // The box each field is typed in (to outline when Done can't take it)
+    function fieldBox(f) {
+        return f === 'name' ? el('pr-cname-wrap') : f === 'when' ? (whenView ? el('pr-cm-when') : el('pr-when'))
+            : f === 'title' ? el('pr-t-title') : f === 'topic' ? el('pr-topic')
+            : (cmView ? el('pr-cm-host') : el('pr-data-text'));
+    }
+    let previewMsgs = [];
+    // Fields typed in (or all, once Save was pressed): a blank one isn't
+    // marked wrong before then
+    let touched = new Set();
+    const FIELDS = ['name', 'when', 'title', 'contents', 'topic'];
+    function showErrors(r) {
+        const err = el('pr-data-err');
+        const msgs = [], bad = new Set();
+        const msgField = [];
+        const add = (f, m, first) => { if (first) { msgs.unshift(m); msgField.unshift(f); } else { msgs.push(m); msgField.push(f); } bad.add(f); };
+        if (r && r.placeholders && r.placeholders.length) {
+            add(editing && editing.title.includes(r.placeholders[0]) ? 'title' : 'contents',
+                `Replace # in <code>${esc(r.placeholders[0])}</code> with a number.`);
+        }
+        if (r && r.error) {
+            const f = r.error.field === 'title' ? 'title' : r.error.field === 'when' ? 'when' : 'contents';
+            add(f, `${f === 'title' ? 'Title' : f === 'when' ? 'When' : 'Contents'}, ${esc(r.error.message)}`);
+        }
+        if (editing && editing.topic && !/^[A-Za-z0-9_-]{1,64}$/.test(editing.topic)) add('topic', 'Topic: up to 64 letters, digits, - and _.');
+        else if (editing && editing.topic && el('nt-provider').value === 'telegram' && !/^\d+$/.test(editing.topic)) add('topic', 'Topic ID: a number (the topic\'s ID).');
+        if (editing && isCustom(editing.key)) {
+            const c = customById(Number(editing.key.slice(7)));
+            const nameBad = !RX_CUSTOM_NAME.test(editing.name) ? 'Name: up to 32 letters, digits and _, starting with a letter.'
+                : customs.some(o => o !== c && o.name.toLowerCase() === editing.name.toLowerCase()) ? 'Name: another custom notification has it.' : '';
+            if (nameBad) add('name', nameBad, true);
+            // State: what the condition is now (empty: never true)
+            const st = !editing.when.trim() ? false : r && typeof r.when_now === 'boolean' ? r.when_now : null;
+            el('pr-now').innerHTML = st === null ? '' : `State: <b class="${st ? 'yes' : 'no'}">${st ? 'True' : 'False'}</b>`;
+        }
+        previewError = msgs.length ? msgs.join(' ') : null;
+        previewMsgs = msgs;
+        // Shown: a field with something in it, or typed in, or after Save
+        const shownField = f => touched.has(f) || !!(editing && String(editing[f] || '').trim());
+        const visible = msgs.filter((m, i) => shownField(msgField[i]));
+        FIELDS.forEach(f => fieldBox(f).classList.toggle('pr-bad', bad.has(f) && shownField(f)));
+        err.innerHTML = visible.join('<br>');
+        err.style.display = visible.length ? '' : 'none';
+    }
+    async function preview() {
+        if (!editing) return;
+        const seq = ++previewSeq;
+        let r = null;
+        try {
+            const custom = isCustom(editing.key);
+            r = await api('/server/pushraker/preview', 'POST', {
+                key: custom ? 'custom_' + (editing.name || 'my_notification') : editing.key,
+                title: editing.title, contents: editing.contents, when: custom ? editing.when : ''
+            });
+        } catch (e) {
+            if (seq === previewSeq) el('pr-prev').textContent = 'Preview unavailable: ' + e.message;
+            return;
+        }
+        if (seq !== previewSeq || !editing) return;
+        showErrors(r);
+        const img = await imageFor(editing);
+        if (seq !== previewSeq || !editing) return;
+        const why = !img && editing.image === 'camera' && camWhy(editing) ? `<div class="pr-now">📷 No camera picture: ${esc(camWhy(editing))}</div>` : '';
+        el('pr-prev').innerHTML = `<div class="pr-pt">${esc(r.title || '')}</div>${esc(r.text || '')}${img ? `<img src="${img}" alt="">` : why}`;
+    }
+    // The image a choice would send: the sample render, a snapshot, the
+    // sample spool picture
+    async function imageFor(t, kind) {
+        kind = kind || t.image;
+        if (kind === 'none') return null;
+        // The notification's camera, or the page's default camera
+        const cam = t.camera || el('nt-camera').value;
+        if (kind === 'camera' && !cam) return null;
+        const id = kind === 'render' ? 'render' : kind === 'camera' ? 'camera:' + cam : `graphic:${t.key}:${t.remaining}`;
+        if (!(id in imgCache)) {
+            imgCache[id] = api('/server/pushraker/preview_image', 'POST',
+                { key: t.key, image: kind, camera: cam || '', remaining: t.remaining ? 'true' : 'false' })
+                .then(r => {
+                    if (r && r.image) return r.image;
+                    imgWhy[id] = (r && r.error) || 'no picture';
+                    delete imgCache[id];        // try again next time
+                    return null;
+                }).catch(e => { imgWhy[id] = e.message; delete imgCache[id]; return null; });
+        }
+        return imgCache[id];
+    }
+    const IMAGE_LABELS = { none: 'None', render: 'Render', camera: 'Camera', graphic: 'Graphic' };
+    async function renderImages() {
+        const t = editing, meta = tplMeta(t.key);
+        const box = el('pr-imgs');
+        box.innerHTML = meta.images.map(k =>
+            `<button type="button" class="pr-img${k === t.image ? ' on' : ''}" data-img="${k}"><div class="pr-th">${k === 'none' ? '∅' : ''}</div>${IMAGE_LABELS[k]}</button>`).join('');
+        box.querySelectorAll('[data-img]').forEach(b => {
+            b.onclick = () => { editing.image = b.dataset.img; renderImages(); preview(); };
+        });
+        const cams = Object.keys(state.meta.cameras || {});
+        const def = el('nt-camera').value;
+        el('pr-imgopts').innerHTML =
+            (t.image === 'camera' ? `<label>Camera <select id="pr-cam">${[['', `Default camera (${esc(def || 'none')})`]].concat(cams.map(c => [c, c])).map(([v, l]) =>
+                `<option value="${esc(v)}"${v === (t.camera || '') ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` : '') +
+            (t.image === 'graphic' ? `<label><input type="checkbox" id="pr-remaining"${t.remaining ? ' checked' : ''}> Show filament remaining</label>` : '');
+        if (el('pr-cam')) el('pr-cam').onchange = () => { editing.camera = el('pr-cam').value; renderImages(); preview(); };
+        if (el('pr-remaining')) el('pr-remaining').onchange = () => { editing.remaining = el('pr-remaining').checked; renderImages(); preview(); };
+        for (const k of meta.images) {
+            if (k === 'none') continue;
+            const src = await imageFor(t, k);
+            const th = box.querySelector(`[data-img="${k}"] .pr-th`);
+            if (th && src) th.style.backgroundImage = `url(${src})`;
+            else if (th) {
+                th.innerHTML = k === 'camera' && !(t.camera || el('nt-camera').value) ? '<small>No camera</small>' : k === 'camera' ? '<small>No picture</small>' : '—';
+                if (k === 'camera' && camWhy(t)) th.title = camWhy(t);
+            }
+        }
+    }
+    // The topic: ntfy and Telegram only, with push on; empty: the default
+    function renderTopic() {
+        const provider = el('nt-provider').value;
+        const on = el('nt-push-enabled').checked && (provider === 'ntfy' || provider === 'telegram');
+        const wrap = el('pr-topicwrap'), input = el('pr-topic'), info = el('pr-topic-info');
+        wrap.classList.toggle('off', !on);
+        input.disabled = !on;
+        input.value = editing.topic || '';
+        const set = ' A template can set it: {% set topic = "…" %}.';
+        if (!on) {
+            el('pr-topic-lbl').textContent = 'Topic';
+            input.placeholder = '';
+            info.dataset.info = 'Supported by ntfy and Telegram only (push notifications on).';
+        } else if (provider === 'ntfy') {
+            el('pr-topic-lbl').textContent = 'Topic';
+            input.placeholder = `${el('nt-topic').value || 'printer'} (default)`;
+            info.dataset.info = 'Sends this notification to another topic on the same ntfy server. Leave empty for default.' + set;
+        } else {
+            el('pr-topic-lbl').textContent = 'Topic ID';
+            input.placeholder = 'the chat (default)';
+            info.dataset.info = 'Sends this notification to a topic of the chat, by its ID (a number). Only in groups with topics turned on (forum-style groups). Leave empty for default (the chat itself).' + set;
+        }
+    }
+    el('pr-topic').oninput = () => {
+        if (!editing) return;
+        editing.topic = el('pr-topic').value.trim();
+        touched.add('topic');
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(preview, 400);
+    };
+    wireTips(el('pr-topicwrap'));
+
+    // The notification's priority (push only); a template can change it
+    // for one notification
+    function renderPriority() {
+        const on = el('nt-push-enabled').checked;
+        const wrap = el('pr-priowrap'), sel = el('pr-prio');
+        sel.innerHTML = state.meta.priorities.map(p =>
+            `<option value="${p}"${p === editing.priority ? ' selected' : ''}>${PRIORITY_LABELS[p] || p}</option>`).join('');
+        wrap.classList.toggle('off', !on);
+        sel.disabled = !on;
+        const provider = el('nt-provider').value;
+        const how = {
+            telegram: 'Telegram: Min and Low arrive silently; the others are the same.',
+            discord: 'Discord: Min and Low arrive silently; High and Max mention whoever is set in Mention.',
+            discord_dm: 'Discord: Min and Low arrive silently; the others are the same.',
+            pushover: 'Pushover: High and Max are both Pushover\'s high priority.'
+        }[provider] || '';
+        el('pr-prio-info').dataset.info = (on ? 'The priority this notification is sent at. ' + how : 'Not used: push notifications are off.') +
+            ' A template can change it for one notification: {% set priority = "high" %} (min, low, default, high, max).';
+    }
+    el('pr-prio').onchange = () => { if (editing) editing.priority = el('pr-prio').value; };
+    wireTips(el('pr-priowrap'));
+
+    function fillEditor() {
+        renderPriority();
+        renderTopic();
+        const custom = isCustom(editing.key);
+        el('pr-custom').style.display = custom ? '' : 'none';
+        el('pr-data-reset').style.display = custom ? 'none' : '';
+        el('pr-data-delete').style.display = custom ? '' : 'none';
+        filling = true;
+        touched = new Set();
+        setPlaceholders(custom);
+        el('pr-block-pop').style.display = 'none';
+        if (custom) {
+            el('pr-cname').value = editing.name;
+            el('pr-when').value = editing.when;
+            if (whenView) field('when').set(editing.when);
+            el('pr-repeat').value = editing.repeat;
+            el('pr-rmin').value = editing.repeat_minutes;
+            el('pr-now').innerHTML = '';
+        }
+        el('pr-t-title').value = editing.title;
+        field('contents').set(editing.contents);
+        if (!cmView) el('pr-data-text').value = editing.contents;
+        filling = false;
+        renderImages();
+        editorChanged();
+    }
+    async function openEditor(key) {
+        const meta = tplMeta(key);
+        if (!meta) return;
+        editing = Object.assign({ key }, effective(key));
+        if (!isCustom(key)) editing.priority = (state.rows[key] || {}).priority || 'default';
+        delete imgCache['camera:' + (editing.camera || '')];
+        el('pr-data-title').textContent = meta.label;
+        el('pr-prev').innerHTML = '';
+        el('pr-data').classList.add('open');
+        document.body.classList.add('pr-locked');
+        await mountEditor();
+        fillEditor();
+        activeField = isCustom(key) && !editing.when ? 'when' : 'contents';
+        await renderPicker(await loadCatalogue(isCustom(key) ? 'custom' : key));
+        // From the top (a new one: on its name)
+        el('pr-data').querySelector('.pr-modal-box').scrollTop = 0;
+        if (isCustom(key) && !editing.name) el('pr-cname').focus({ preventScroll: true });
+    }
+    async function closeEditor(keep) {
+        if (keep && previewError) {
+            // Next to Save: why it can't close (the fields are outlined)
+            FIELDS.forEach(f => touched.add(f));
+            preview();
+            const pop = el('pr-block-pop');
+            pop.innerHTML = '⚠️ ' + previewMsgs.join('<br>⚠️ ');
+            pop.style.display = '';
+            return;
+        }
+        if (editing && isCustom(editing.key)) {
+            if (keep && !(await keepCustom())) return;
+            el('pr-data').classList.remove('open');
+            document.body.classList.remove('pr-locked');
+            clearTimeout(previewTimer);
+            editing = null;
+            draft = null;
+            return;
+        }
+        el('pr-data').classList.remove('open');
+            document.body.classList.remove('pr-locked');
+        clearTimeout(previewTimer);
+        if (keep && editing) {
+            editing.title = el('pr-t-title').value;
+            editing.contents = field('contents').get();
+            const t = {};
+            TPL_FIELDS.forEach(f => { t[f] = editing[f]; });
+            const diff = diffFromDefault(editing.key, t);
+            if (Object.keys(diff).length) tplEdits[editing.key] = diff;
+            else delete tplEdits[editing.key];
+            if (state.rows[editing.key]) state.rows[editing.key].priority = editing.priority;
+            refreshEditButtons();
+            setTimeout(markDirty, 0);
+        }
+        editing = null;
+    }
+    // A custom notification's Done: its name checked; a saved one renamed
+    // only after the warning (G-code that sends it by name stops working)
+    async function keepCustom() {
+        editorChanged();
+        const id = Number(editing.key.slice(7));
+        const c = customById(id);
+        if (!RX_CUSTOM_NAME.test(editing.name) || customs.some(o => o !== c && o.name.toLowerCase() === editing.name.toLowerCase())) {
+            preview();
+            return false;
+        }
+        if (c._saved && c._saved !== editing.name) {
+            const ok = await confirmReset(
+                `G-code and macros that send this notification by its name (RESPOND PREFIX=notify_custom MSG=pushraker.${c._saved}) stop working once you save: pushraker can't change them. Change them to MSG=pushraker.${editing.name}.`,
+                `⚠️ Rename ${c._saved} to ${editing.name}?`, 'Rename');
+            if (!ok) return false;
+        }
+        Object.assign(c, pickCustom(editing));
+        if (c === draft) customs.push(c);
+        renderCustomRows();
+        setTimeout(markDirty, 0);
+        return true;
+    }
+    // Delete a custom notification (from its row's ✕ or the editor),
+    // after the warning
+    async function deleteCustom(c) {
+        if (!c) return false;
+        if (c !== draft) {
+            const ok = await confirmReset(
+                `${c._saved ? 'G-code and macros that send it will stop working.\n\n' : ''}Deletion takes effect on Save & Apply.`,
+                `⚠️ Delete ${c.name || 'this custom notification'}?`, 'Delete');
+            if (!ok) return false;
+            customs = customs.filter(o => o !== c);
+            renderCustomRows();
+            setTimeout(markDirty, 0);
+        }
+        return true;
+    }
+    el('pr-data-delete').onclick = async () => {
+        if (!editing || !isCustom(editing.key)) return;
+        if (!(await deleteCustom(customById(Number(editing.key.slice(7)))))) return;
+        el('pr-data').classList.remove('open');
+            document.body.classList.remove('pr-locked');
+        editing = null;
+        draft = null;
+    };
+    el('pr-cname').oninput = el('pr-when').oninput = editorChanged;
+    el('pr-repeat').onchange = el('pr-rmin').oninput = editorChanged;
+    el('pr-when').onfocus = () => { activeField = 'when'; updateJinjaPane(); };
+    ['pr-cname'].forEach(id => { el(id).onfocus = () => { el('pr-blocks').style.display = ''; }; });
+
+    // Reset: back to the default, after a confirmation that only works
+    // after 3 seconds (also Delete and the rename warning)
+    function confirmReset(text, title, label) {
+        return new Promise(resolve => {
+            const box = el('pr-reset'), yes = el('pr-reset-yes'), no = el('pr-reset-no');
+            el('pr-reset-text').textContent = text;
+            el('pr-reset-title').textContent = title || '⚠️ Reset this notification?';
+            label = label || 'Reset';
+            let left = 3, timer = null;
+            const tick = () => {
+                yes.disabled = left > 0;
+                yes.textContent = left > 0 ? `${label} (${left})` : label;
+                if (left-- > 0) timer = setTimeout(tick, 1000);
+            };
+            const done = v => { clearTimeout(timer); box.classList.remove('open'); resolve(v); };
+            yes.onclick = () => { if (!yes.disabled) done(true); };
+            no.onclick = () => done(false);
+            box.classList.add('open');
+            no.focus();
+            tick();
+        });
+    }
+    el('pr-data-reset').onclick = async () => {
+        if (!editing) return;
+        const ok = await confirmReset('This notification goes back to its default title, contents and image. What you changed here is removed.');
+        if (!ok || !editing) return;
+        Object.assign(editing, tplMeta(editing.key).default);
+        fillEditor();
+    };
+    el('pr-data-ok').onclick = () => closeEditor(true);
+    el('pr-data-cancel').onclick = () => closeEditor(false);
+    const ta = el('pr-data-text'), ti = el('pr-t-title');
+    ta.oninput = ti.oninput = editorChanged;
+    ta.onfocus = () => { activeField = 'contents'; updateJinjaPane(); };
+    ti.onfocus = () => { activeField = 'title'; updateJinjaPane(); };
+    ['keyup', 'click'].forEach(ev => {
+        ta.addEventListener(ev, updateJinjaPane);
+        ti.addEventListener(ev, updateJinjaPane);
+    });
+
+    // -- CodeMirror: line numbers, colours and autocomplete in the
+    // contents, when installed (on request, from the dialog)
+    let cmStatus = null;
+    const kb = n => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.round(n / 1e3) + ' KB';
+    async function cmRefresh() {
+        try { cmStatus = await api('/server/pushraker/codemirror'); } catch (e) { cmStatus = null; }
+        el('pr-cm-link').textContent = cmStatus && cmStatus.installed ? 'Manage CodeMirror' : 'Install CodeMirror';
+        el('pr-cm-link').style.display = cmStatus ? '' : 'none';
+        el('pr-cm-rec').style.display = cmStatus && !cmStatus.installed ? '' : 'none';
+        return cmStatus;
+    }
+    async function cmLoad() {
+        if (window.PushrakerCM) return true;
+        try {
+            const r = await api('/server/pushraker/codemirror_js');
+            if (!r || !r.js) return false;
+            const url = URL.createObjectURL(new Blob([r.js], { type: 'text/javascript' }));
+            await new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = url; sc.onload = ok; sc.onerror = bad; document.head.append(sc); });
+            return !!window.PushrakerCM;
+        } catch (e) {
+            return false;
+        }
+    }
+    // Every name a template can start from, for autocomplete
+    function completionNames() {
+        const out = new Set(['printer', 'job', 'extruders', 'event', 'machine', 'loop.index', 'loop.first', 'loop.last']);
+        const walk = n => { if (n.expr) out.add(n.expr.replace(/#/g, '1')); (n.children || []).forEach(walk); };
+        const ck = editing ? (isCustom(editing.key) ? 'custom' : editing.key) : '';
+        (catalogues[ck] || []).forEach(c => (c.children || []).forEach(walk));
+        const loop = editing ? loopAt(field('contents').get(), field('contents').sel()[0]) : null;
+        if (loop) loopFields(loop.list).forEach(k => out.add(loop.name + '.' + k));
+        return [...out];
+    }
+    const KEYWORDS = ['if', 'elif', 'else', 'endif', 'for', 'in', 'endfor', 'not', 'and', 'or', 'is', 'defined', 'true', 'false', 'none', 'set'];
+    const FILTERS = ['round', 'int', 'float', 'default', 'join', 'length', 'upper', 'lower', 'title', 'replace', 'list', 'map', 'first', 'last', 'sort', 'sum', 'max', 'min', 'abs', 'trim', 'string', 'duration', 'clock', 'toolhead', 'pct', 'plural', 'ordinal', 'lines'];
+    const SET_NAMES = [['priority', 'this notification\'s priority'], ['image', 'its image'], ['topic', 'its topic (ntfy, Telegram)'], ['timezone', 'times in this zone']];
+    const SET_VALUES = { priority: ['min', 'low', 'default', 'high', 'max'], image: ['none', 'render', 'camera', 'graphic'] };
+    function completions(ctx) {
+        const word = ctx.matchBefore(/[\w.]*$/);
+        if (!word || (word.from === word.to && !ctx.explicit)) return null;
+        const before = ctx.state.doc.sliceString(Math.max(0, word.from - 2), word.from);
+        const v = ctx.state.doc.toString(), tag = tagAt(v, word.from);
+        let options;
+        // {% set name = "value" %}: the names a template can set, then their values
+        const line = ctx.state.doc.lineAt(word.from), head = v.slice(line.from, word.from);
+        const setVal = /\bset\s+(priority|image)\s*=\s*["']$/.exec(head);
+        if (tag && tag.kind === 'stmt' && /\bset\s+$/.test(head)) {
+            options = SET_NAMES.map(([n, d], i) => ({ label: n, type: 'variable', detail: d, boost: -i }));
+            return { from: word.from, options, validFor: /^\w*$/ };
+        }
+        if (setVal) {
+            options = SET_VALUES[setVal[1]].map((x, i) => ({ label: x, type: 'constant', boost: -i }));
+            return { from: word.from, options, validFor: /^\w*$/ };
+        }
+        if (/\|\s?$/.test(before)) options = FILTERS.map(f => ({ label: f, type: 'function' }));
+        else if (tag) options = completionNames().map(n => ({ label: n, type: 'variable' })).concat(tag.kind === 'stmt' ? KEYWORDS.map(k => ({ label: k, type: 'keyword' })) : []);
+        else return null;
+        return { from: word.from, options, validFor: /^[\w.]*$/ };
+    }
+    // When's completion: the whole field is an expression
+    function whenCompletions(ctx) {
+        const word = ctx.matchBefore(/[\w.]*$/);
+        if (!word || (word.from === word.to && !ctx.explicit)) return null;
+        const before = ctx.state.doc.sliceString(Math.max(0, word.from - 2), word.from);
+        const options = /\|\s?$/.test(before) ? FILTERS.map(f => ({ label: f, type: 'function' }))
+            : completionNames().map(n => ({ label: n, type: 'variable' }))
+                .concat(['and', 'or', 'not', 'in', 'is', 'defined', 'none', 'true', 'false'].map(k => ({ label: k, type: 'keyword' })));
+        return { from: word.from, options, validFor: /^[\w.]*$/ };
+    }
+    async function mountEditor() {
+        const host = el('pr-cm-host');
+        if (cmView) return;
+        if (!cmStatus || !cmStatus.installed || !(await cmLoad())) {
+            ta.style.display = '';
+            return;
+        }
+        const C = window.PushrakerCM;
+        cmView = new C.EditorView({
+            parent: host,
+            state: C.EditorState.create({
+                doc: ta.value,
+                extensions: [
+                    C.lineNumbers(), C.history(), C.drawSelection(), C.EditorView.lineWrapping,
+                    C.keymap.of([...C.completionKeymap, ...C.defaultKeymap, ...C.historyKeymap]),
+                    C.StreamLanguage.define(C.jinja2), C.oneDark, C.bracketMatching(),
+                    C.autocompletion({ override: [completions] }),
+                    C.placeholder(() => phSpan.contents),
+                    C.EditorView.updateListener.of(u => {
+                        if (u.docChanged) editorChanged();
+                        else if (u.selectionSet) updateJinjaPane();
+                        if (u.focusChanged && u.view.hasFocus) { activeField = 'contents'; updateJinjaPane(); }
+                    })
+                ]
+            })
+        });
+        ta.style.display = 'none';
+        // When: an expression on its own (no {{ }}), with the same colours
+        // and completion
+        whenView = new C.EditorView({
+            parent: el('pr-cm-when'),
+            state: C.EditorState.create({
+                doc: el('pr-when').value,
+                extensions: [
+                    C.lineNumbers(), C.history(), C.drawSelection(), C.EditorView.lineWrapping,
+                    C.keymap.of([...C.completionKeymap, ...C.defaultKeymap, ...C.historyKeymap]),
+                    C.StreamLanguage.define(C.jinja2), C.oneDark, C.bracketMatching(),
+                    C.autocompletion({ override: [whenCompletions] }),
+                    C.placeholder(() => phSpan.when),
+                    C.EditorView.updateListener.of(u => {
+                        if (u.docChanged) editorChanged();
+                        else if (u.selectionSet) updateJinjaPane();
+                        if (u.focusChanged && u.view.hasFocus) { activeField = 'when'; updateJinjaPane(); el('pr-blocks').style.display = 'none'; }
+                    })
+                ]
+            })
+        });
+        el('pr-when').style.display = 'none';
+    }
+    function unmountEditor() {
+        if (!cmView) return;
+        ta.value = cmView.state.doc.toString();
+        cmView.destroy();
+        cmView = null;
+        ta.style.display = '';
+        if (whenView) {
+            el('pr-when').value = whenView.state.doc.toString();
+            whenView.destroy();
+            whenView = null;
+            el('pr-when').style.display = '';
+        }
+    }
+    function cmDialog() {
+        const st = cmStatus || {};
+        el('pr-cm-title').textContent = st.installed ? 'Manage CodeMirror' : 'Install CodeMirror';
+        el('pr-cm-size').textContent = '~' + kb(st.size || 0);
+        el('pr-cm-free').textContent = st.free != null ? `${kb(st.free)} free of ${kb(st.total)}` : 'unknown';
+        el('pr-cm-version').textContent = `${st.version || ''} (built for pushraker ${st.pushraker || ''})`;
+        el('pr-cm-licence').href = st.licence_url || 'https://codemirror.net/';
+        el('pr-cm-buttons').innerHTML = st.installed
+            ? '<button type="button" class="btn btn-secondary" id="pr-cm-update">Check for updates</button><button type="button" class="btn btn-remove" id="pr-cm-remove">Remove</button><button type="button" class="btn btn-secondary" id="pr-cm-close">Close</button>'
+            : '<button type="button" class="btn btn-save" id="pr-cm-install">Install</button><button type="button" class="btn btn-secondary" id="pr-cm-close">Close</button>';
+        const msg = (text, err) => { el('pr-cm-msg').textContent = text; el('pr-cm-msg').classList.toggle('err', !!err); };
+        const log = el('pr-cm-log');
+        const run = async (action, busy) => {
+            el('pr-cm-buttons').querySelectorAll('button').forEach(b => { b.disabled = true; });
+            msg(busy);
+            log.classList.add('on');
+            log.innerHTML = `<div>${esc(busy)}</div>`;
+            let r = null;
+            try { r = await api('/server/pushraker/codemirror', 'POST', { action }); } catch (e) { r = { error: e.message }; }
+            log.innerHTML = ((r && r.log) || []).map(l => `<div>${esc(l)}</div>`).join('') +
+                (r && r.error ? `<div class="err">Error: ${esc(r.error)}</div>` : '<div class="ok">Done.</div>');
+            await cmRefresh();
+            cmDialog();
+            if (r && r.error) { msg('Failed: see below.', true); return; }
+            if (action === 'remove') { unmountEditor(); msg('Removed.'); }
+            else if (action === 'install') { if (editing) { await mountEditor(); field('contents').set(editing.contents); } msg('Installed.'); }
+            else msg(r && r.up_to_date ? 'Up to date.' : 'Updated.');
+        };
+        el('pr-cm-close').onclick = () => el('pr-cm').classList.remove('open');
+        if (el('pr-cm-install')) el('pr-cm-install').onclick = () => run('install', 'Installing…');
+        if (el('pr-cm-update')) el('pr-cm-update').onclick = () => run('update', 'Checking…');
+        if (el('pr-cm-remove')) el('pr-cm-remove').onclick = () => run('remove', 'Removing…');
+        el('pr-cm').classList.add('open');
+    }
+    el('pr-cm-link').onclick = async () => {
+        await cmRefresh();
+        el('pr-cm-msg').textContent = '';
+        el('pr-cm-log').classList.remove('on');
+        cmDialog();
+    };
+    el('pr-cm').onclick = e => { if (e.target === el('pr-cm')) el('pr-cm').classList.remove('open'); };
+
+    // A row is dimmed where it sends nothing: priority without push, image
+    // without push or email
+    function updateRowDimming() {
+        const push = el('nt-push-enabled').checked;
+        const email = el('nt-email-enabled').checked;
+        const hook = el('nt-wh-enabled').checked;   // gets every row
+        el('nt-rows').querySelectorAll('tr[data-row]').forEach(tr => {
+            const id = tr.dataset.row;
+            const p = push && tr.querySelector(`[data-enabled="${id}"]`).checked;
+            const e = email && tr.querySelector(`[data-email="${id}"]`).checked;
+            tr.classList.toggle('nt-nopush', !p);
+            tr.classList.toggle('nt-off', !p && !e && !hook);
+        });
+        el('nt-crows').querySelectorAll('tr[data-crow]').forEach(tr => {
+            const id = tr.dataset.crow;
+            const p = push && tr.querySelector(`[data-cenabled="${id}"]`).checked;
+            const e = email && tr.querySelector(`[data-cemail="${id}"]`).checked;
+            tr.classList.toggle('nt-nopush', !p);
+            tr.classList.toggle('nt-off', !p && !e && !hook);
+        });
+        el('nt-table').classList.toggle('nt-no-push', !push);
+        el('nt-table').classList.toggle('nt-no-email', !email);
+        el('nt-table').querySelectorAll('[data-email], [data-cemail]').forEach(cb => { cb.disabled = !email; });
+        el('nt-email-info').style.display = email ? 'none' : '';
+    }
+
+    // The user guide, and the section of it for each push service
+    const GUIDE = 'https://github.com/noon92/pushraker/blob/main/docs/guide.md';
+    const guideLink = (anchor, text) =>
+        ` <a href="${GUIDE}#${anchor}" target="_blank">${text || 'Setup guide'}</a>`;
+    const PROVIDER_GUIDE = {
+        ntfy: ['ntfy-server', 'Hosting your own ntfy'], gotify: ['gotify'],
+        telegram: ['telegram'], discord_dm: ['discord'], discord: ['discord']
+    };
+    const PROVIDER_HINTS = {
+        ntfy: '<a href="https://ntfy.sh" target="_blank">ntfy</a>: free and open source; use the public server or host your own.',
+        gotify: '<a href="https://gotify.net" target="_blank">Gotify</a>: free and open source, on your own server.<div class="nt-public">Text only: picture attachments not supported by Gotify.</div>',
+        pushover: '<a href="https://pushover.net" target="_blank">Pushover</a>: one-time purchase per platform after a 30-day trial.',
+        telegram: '<a href="https://telegram.org" target="_blank">Telegram</a>: free; notifications come from your own bot, in a private chat or a group. Low and min priority arrive silently.',
+        discord_dm: '<a href="https://discord.com" target="_blank">Discord</a>: free; direct messages from your own bot. Low and min priority arrive silently.',
+        discord: '<a href="https://discord.com" target="_blank">Discord</a>: free; posts to a channel on a server you manage. Low and min priority arrive silently.'
+    };
+
+    const EMAIL_HINTS = {
+        gmail: 'Username and From: your Gmail address. Password: an ' +
+            '<a href="https://myaccount.google.com/apppasswords" target="_blank">app password</a> ' +
+            '(needs 2-Step Verification; <a href="https://support.google.com/accounts/answer/185833" target="_blank">how app passwords work</a>), ' +
+            'not your Google password.',
+        brevo: '<a href="https://www.brevo.com" target="_blank">Brevo</a>: Username is your SMTP login (…@smtp-brevo.com), password an SMTP key; both under ' +
+            '<a href="https://app.brevo.com/settings/keys/smtp" target="_blank">SMTP &amp; API</a>. ' +
+            'From must be a sender you have verified in Brevo. If ' +
+            '<a href="https://app.brevo.com/security/authorised_ips" target="_blank">IP blocking</a> is on, allow the printer\'s network.',
+        other: 'Your email provider\'s SMTP settings.'
+    };
+
+    function presetFor(host) {
+        const presets = state.meta.email_presets;
+        return Object.keys(presets).find(k => presets[k].host === host.trim().toLowerCase()) || (host.trim() ? 'other' : 'gmail');
+    }
+
+    function applyPreset() {
+        const key = el('nt-email-preset').value;
+        const p = state.meta.email_presets[key];
+        if (p) {
+            el('nt-email-host').value = p.host;
+            el('nt-email-port').value = p.port;
+            el('nt-email-security').value = p.security;
+        }
+        updateEmail();
+    }
+
+    function updateEmail() {
+        const on = el('nt-email-enabled').checked;
+        el('nt-email').style.display = on ? '' : 'none';
+        const key = el('nt-email-preset').value;
+        el('nt-email-hint').innerHTML = EMAIL_HINTS[key] || '';
+        el('nt-email-password-label').textContent = key === 'brevo' ? 'SMTP key' : (key === 'gmail' ? 'App password' : 'Password');
+        el('nt-email-password').placeholder = state.has_email_password ? 'Saved (leave empty to keep)' : '';
+        updateRowDimming();
+    }
+
+    const PUBLIC_SERVER = 'https://ntfy.sh';
+    const PUBLIC_WARNING = 'ntfy.sh is a public server. Anyone who knows or guesses your topic can read your ' +
+        'notifications, including camera images, model previews and file names.\n\n' +
+        'It is fine for testing. For everyday use, setting up your own ntfy server is a good idea. ' +
+        'On the public server, use a long random topic (the Random button creates one).';
+    const TG_WARNING = 'Telegram does not support clickable URLs without a <code>.</code> (period character), ' +
+        'so the Web UI and Live Camera buttons won\'t work in Telegram. Pick an IP address from <b>Fill in</b>, ' +
+        'or use a full name such as <code>u1.home</code>.';
+    const isPublic = server => /^https?:\/\/(www\.)?ntfy\.sh\/?$/i.test(server.trim());
+
+    function randomTopic() {
+        const bytes = new Uint8Array(12);
+        crypto.getRandomValues(bytes);
+        const prefix = (el('nt-name').value.trim() || 'printer').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'printer';
+        return prefix + '-' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // RFC 1918 private ranges, link-local and mDNS names: reachable on the LAN only
+    function isLanOnly(url) {
+        let host;
+        try { host = new URL(url).hostname.toLowerCase(); } catch (e) { return false; }
+        if (host === 'localhost' || host.endsWith('.local')) return true;
+        const m = host.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
+        if (!m) return false;
+        const a = +m[1], b = +m[2];
+        return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) ||
+            (a === 192 && b === 168) || (a === 169 && b === 254);
+    }
+
+    function hostOf(url) {
+        try { return new URL(url).hostname.toLowerCase(); } catch (e) { return ''; }
+    }
+
+    // The warnings follow the field once it's left (or filled in), not
+    // while typing
+    function updatePrinterUrl() {
+        const url = el('nt-printer-url').value.trim();
+        el('nt-local-warn').style.display = url && isLanOnly(url) ? '' : 'none';
+        const prov = el('nt-provider').value;
+        el('nt-printer-url-hint').innerHTML = prov === 'pushover'
+            ? 'Adds a <b>Web UI</b> link. Without it, fault notifications link to the Error Index.'
+            : ['gotify', 'telegram', 'discord', 'discord_dm'].includes(prov)
+                ? 'Adds <b>Web UI</b> and <b>Live Camera</b> links. Leave empty for no links.'
+                : 'Adds <b>Web UI</b> and <b>Live Camera</b> buttons. Leave empty for no buttons.';
+        const host = hostOf(url);
+        const tg = prov === 'telegram' && el('nt-push-enabled').checked && !!host && !host.includes('.') && !host.includes(':');
+        el('nt-tg-warn').style.display = tg ? '' : 'none';
+        if (tg) el('nt-tg-warn').innerHTML = TG_WARNING;
+    }
+
+    // Fill in: this page's own address (how you reach the printer now),
+    // and the IPv4 address of each network interface Moonraker reports
+    // (/machine/system_info), by interface name; nothing is detected by
+    // name. Then Clear.
+    let fillChoices = null;
+    async function fillOptions() {
+        if (fillChoices) return fillChoices;
+        const out = [];
+        if (/^https?:$/.test(location.protocol) && location.hostname) {
+            out.push({ url: location.protocol + '//' + location.host, html:
+                `This browser's address: <code>${esc(location.host)}</code><small>Works wherever this address works for you</small>` });
+        }
+        try {
+            const info = await api('/machine/system_info');
+            const net = (info && info.system_info && info.system_info.network) || {};
+            for (const [name, iface] of Object.entries(net)) {
+                if (name === 'lo') continue;
+                for (const a of iface.ip_addresses || []) {
+                    if (a.family !== 'ipv4' || a.is_link_local || !a.address || a.address.startsWith('127.')) continue;
+                    out.push({ url: 'http://' + a.address, html: `${esc(name)}: <code>${esc(a.address)}</code>` });
+                }
+            }
+        } catch (e) { /* the browser's address is still offered */ }
+        fillChoices = out;
+        return out;
+    }
+    function closeFill() {
+        el('nt-fill-menu').classList.remove('open');
+        el('nt-fill').setAttribute('aria-expanded', 'false');
+    }
+    async function openFill() {
+        const menu = el('nt-fill-menu');
+        const choices = await fillOptions();
+        menu.innerHTML = choices.map((c, i) =>
+            `<button type="button" role="menuitem" data-i="${i}">${c.html}</button>`).join('') +
+            '<button type="button" role="menuitem" class="nt-fill-clear" data-i="clear">Clear (no buttons)</button>';
+        menu.querySelectorAll('button').forEach(b => b.onclick = () => {
+            el('nt-printer-url').value = b.dataset.i === 'clear' ? '' : choices[+b.dataset.i].url;
+            closeFill();
+            updatePrinterUrl();
+        });
+        menu.classList.add('open');
+        el('nt-fill').setAttribute('aria-expanded', 'true');
+        const first = menu.querySelector('button');
+        if (first) first.focus();
+    }
+    document.addEventListener('click', e => {
+        if (!e.target.closest('.nt-fill-wrap')) closeFill();
+    });
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape' || e.defaultPrevented) return;
+        closeFill();
+        if (el('pr-cm').classList.contains('open')) el('pr-cm').classList.remove('open');
+    });
+
+    function updatePublicWarning() {
+        const pub = el('nt-provider').value === 'ntfy' && isPublic(el('nt-server').value);
+        el('nt-public-warn').style.display = pub ? '' : 'none';
+        el('nt-use-public').classList.toggle('nt-active', pub);
+    }
+
+    async function usePublicServer() {
+        if (!await confirmModal('Use the public ntfy server?', PUBLIC_WARNING, 'Use ntfy.sh')) return;
+        el('nt-server').value = PUBLIC_SERVER;
+        if (el('nt-topic').value.trim().length < 16) el('nt-topic').value = randomTopic();
+        el('nt-auth').value = 'none';
+        updateAuth();
+        updatePublicWarning();
+    }
+
+    // Telegram's topics are IDs: the notifications whose topic isn't one
+    function badTopicRows() {
+        if (el('nt-provider').value !== 'telegram') return { tpls: [], customs: [] };
+        return {
+            tpls: (state.meta.templates || []).filter(t => {
+                const v = (tplEdits[t.key] || {}).topic;
+                return v && !/^\d+$/.test(v);
+            }),
+            customs: customs.filter(c => c.topic && !/^\d+$/.test(c.topic))
+        };
+    }
+    function badTopics() {
+        const b = badTopicRows();
+        return b.tpls.map(t => t.label).concat(b.customs.map(c => c.name));
+    }
+    function renderTopicWarning() {
+        // The rows whose topic Telegram can't take: outlined in red
+        const rows = badTopicRows();
+        document.querySelectorAll('tr.nt-topic-bad').forEach(tr => tr.classList.remove('nt-topic-bad'));
+        rows.tpls.forEach(t => {
+            const tr = el('nt-rows').querySelector(`tr[data-row="${t.row}"]`);
+            if (tr) tr.classList.add('nt-topic-bad');
+        });
+        rows.customs.forEach(c => {
+            const tr = el('nt-crows').querySelector(`tr[data-crow="${c._id}"]`);
+            if (tr) tr.classList.add('nt-topic-bad');
+        });
+        const bad = badTopics();
+        el('nt-topic-warn').innerHTML = bad.length
+            ? `⚠️ Telegram topics are IDs (numbers). Change or clear the topic of: ${bad.map(esc).join(', ')}. Saving is blocked until then.` : '';
+        el('nt-topic-warn').style.display = bad.length ? '' : 'none';
+    }
+    function updateProvider() {
+        const provider = el('nt-provider').value;
+        renderTopicWarning();
+        el('nt-ntfy').style.display = provider === 'ntfy' ? '' : 'none';
+        const g = PROVIDER_GUIDE[provider];
+        el('nt-provider-hint').innerHTML = (PROVIDER_HINTS[provider] || '') + (g ? guideLink(g[0], g[1]) : '');
+        el('nt-pushover').style.display = provider === 'pushover' ? '' : 'none';
+        el('nt-gotify').style.display = provider === 'gotify' ? '' : 'none';
+        el('nt-gt-token').placeholder = state.has_secret && state.provider === 'gotify' ? 'Saved (leave empty to keep)' : '';
+        el('nt-po-token').placeholder = state.has_secret && state.provider === 'pushover' ? 'Saved (leave empty to keep)' : '';
+        el('nt-telegram').style.display = provider === 'telegram' ? '' : 'none';
+        el('nt-discord').style.display = provider === 'discord' ? '' : 'none';
+        el('nt-discord-dm').style.display = provider === 'discord_dm' ? '' : 'none';
+        el('nt-dc-hook').placeholder = state.has_secret && state.provider === 'discord' ? 'Saved (leave empty to keep)' : 'https://discord.com/api/webhooks/...';
+        el('nt-dc-token').placeholder = state.has_secret && state.provider === 'discord_dm' ? 'Saved (leave empty to keep)' : '';
+        el('nt-tg-token').placeholder = state.has_secret && state.provider === 'telegram' ? 'Saved (leave empty to keep)' : '123456789:ABC...';
+        updatePublicWarning();
+        updateAuth();
+        updatePrinterUrl();
+        if (el('nt-rows').children.length) updateRowDimming();
+    }
+
+    function updateAuth() {
+        const auth = el('nt-auth').value;
+        el('nt-username-field').style.display = auth === 'basic' ? '' : 'none';
+        el('nt-secret-field').style.display = auth === 'none' ? 'none' : '';
+        el('nt-secret-label').textContent = auth === 'basic' ? 'Password' : 'Access token';
+        el('nt-secret').placeholder = state.has_secret && state.provider === 'ntfy' && auth === state.auth
+            ? 'Saved (leave empty to keep)' : (auth === 'token' ? 'tk_...' : '');
+    }
+
+    // The cameras are Moonraker's webcams; one with no snapshot URL can't
+    // give pictures
+    const BROWSER_TZ = (() => {
+        try { return (Intl.DateTimeFormat().resolvedOptions().timeZone || '').replace(/[^A-Za-z0-9_+\-\/]/g, ''); } catch (e) { return ''; }
+    })();
+    function renderTimezones() {
+        let zones = [];
+        try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) { zones = []; }
+        const cur = state.timezone && state.timezone !== 'browser' ? state.timezone : '';
+        if (cur && !zones.includes(cur)) zones = [cur].concat(zones);
+        el('nt-tz').innerHTML = `<option value="browser">Browser (${esc(BROWSER_TZ || 'unknown')})</option>` +
+            zones.map(z => `<option value="${esc(z)}">${esc(z)}</option>`).join('');
+        el('nt-tz').value = cur || 'browser';
+    }
+    function renderCameras() {
+        const cams = state.meta.cameras || {};
+        const names = Object.keys(cams);
+        const opts = ['<option value="">None (no camera images)</option>'];
+        names.forEach(n => opts.push(`<option value="${esc(n)}">${esc(n)}${cams[n].snapshot ? '' : ' (no snapshot URL)'}</option>`));
+        if (state.camera && !cams[state.camera]) opts.push(`<option value="${esc(state.camera)}">${esc(state.camera)} (not found)</option>`);
+        el('nt-camera').innerHTML = opts.join('');
+        el('nt-camera').value = state.camera || '';
+        updateCamera();
+    }
+
+    function updateCamera() {
+        const cam = el('nt-camera').value;
+        const cams = state.meta.cameras || {};
+        el('nt-camera-warn').textContent = !cam ? '' : !cams[cam]
+            ? `No webcam named "${cam}" in Moonraker: notifications are sent without camera images.`
+            : !cams[cam].snapshot ? `The webcam "${cam}" has no snapshot URL: notifications are sent without camera images.` : '';
+    }
+
+    function updateEnabled() {
+        el('nt-root').classList.toggle('nt-disabled', !el('nt-enabled').checked);
+    }
+
+    // ---- load / collect ----------------------------------------------------
+    function render(data) {
+        state = data;
+        el('pr-version').textContent = data.meta.version ? `pushraker ${data.meta.version}` : '';
+        el('nt-enabled').checked = data.enabled;
+        el('nt-push-enabled').checked = data.push_enabled !== false;
+        el('nt-push').style.display = el('nt-push-enabled').checked ? '' : 'none';
+        el('nt-push-enabled').onchange = () => {
+            el('nt-push').style.display = el('nt-push-enabled').checked ? '' : 'none';
+            updateRowDimming();
+        };
+        el('nt-provider').value = data.provider;
+        el('nt-po-user').value = data.pushover_user;
+        el('nt-gt-server').value = data.gotify_server || '';
+        el('nt-po-device').value = data.pushover_device;
+        el('nt-tg-chat').value = data.telegram_chat || '';
+        el('nt-dc-user').value = data.discord_user || '';
+        el('nt-dc-mention').value = data.discord_mention || '';
+        el('nt-server').value = data.server;
+        el('nt-topic').value = data.topic;
+        el('nt-auth').value = data.auth;
+        el('nt-username').value = data.username;
+        el('nt-name').value = data.name;
+        el('nt-name').placeholder = data.meta.default_name || 'Printer';
+        el('nt-name-info').dataset.info = `Shown by default in every title, e.g. "✅ ${data.name || data.meta.default_name || 'Printer'} complete".`;
+        el('nt-printer-url').value = data.printer_url;
+        el('nt-email-enabled').checked = data.email_enabled;
+        el('nt-wh-enabled').checked = !!data.webhook_enabled;
+        el('nt-wh-url').placeholder = data.has_webhook_url ? 'Saved (leave empty to keep)' : 'https://example.com/hook';
+        const updateWebhook = () => {
+            el('nt-webhook').style.display = el('nt-wh-enabled').checked ? '' : 'none';
+        };
+        el('nt-wh-enabled').onchange = () => { updateWebhook(); updateRowDimming(); };
+        updateWebhook();
+        // pushraker.conf has a setting that can't be used: what is (not)
+        // being sent, which setting, what it must be; outlined in red
+        const pb = data.meta.stored_problem || { message: data.meta.stored_error || '' };
+        document.querySelectorAll('.nt-bad').forEach(n => n.classList.remove('nt-bad'));
+        if (pb.message) {
+            const sending = data.meta.sending === 'nothing'
+                ? '<b>Nothing is being sent</b> until this is fixed.'
+                : '<b>Notifications are sent with the settings from before this change</b> until it is fixed.';
+            const where = pb.field ? `pushraker.conf has <code>${esc(pb.field)}: ${esc(pb.value)}</code>.` : "pushraker.conf has a setting that can't be used.";
+            el('nt-stored-error').innerHTML = `⚠️ ${sending} ${where} ${esc(pb.message)}. Change it here (outlined in red) and Save &amp; Apply, or in the file.`;
+            // Outlined once the rows are drawn
+            setTimeout(() => {
+                liveCheckAll();
+                const FIELD_INPUT = { driver_temp: 'nt-driver-hot', report_interval: 'nt-report-interval', layers_complete: 'nt-layers', email_port: 'nt-email-port', filament_low_percent: 'nt-fl-percent' };
+                const input = el(FIELD_INPUT[pb.field] || '');
+                if (input) {
+                    input.classList.add('nt-bad');
+                    const tr = input.closest('tr');
+                    if (tr) tr.classList.add('nt-bad');
+                }
+            }, 0);
+        } else {
+            el('nt-stored-error').innerHTML = '';
+        }
+        el('nt-stored-error').style.display = pb.message ? '' : 'none';
+        setTimeout(liveCheckAll, 0);
+        el('nt-fl-percent').value = data.filament_low_percent;
+        el('nt-fl-grams').value = data.filament_low_grams;
+        el('nt-fl-unknown').checked = !!data.filament_unknown;
+        // Without Spoolman: shown, greyed out; its ? says what it needs
+        el('nt-filament').classList.toggle('nt-greyed', !data.meta.spoolman);
+        el('nt-filament').querySelectorAll('input').forEach(i => { i.disabled = !data.meta.spoolman; });
+        el('nt-email-host').value = data.email_host;
+        el('nt-email-port').value = data.email_port;
+        el('nt-email-security').value = data.email_security;
+        el('nt-email-username').value = data.email_username;
+        el('nt-email-from').value = data.email_from;
+        el('nt-email-to').value = data.email_to;
+        el('nt-email-preset').value = presetFor(data.email_host);
+        if (!data.email_host) {
+            const p = data.meta.email_presets[el('nt-email-preset').value];
+            el('nt-email-host').value = p.host;
+            el('nt-email-port').value = p.port;
+            el('nt-email-security').value = p.security;
+        }
+        tplEdits = JSON.parse(JSON.stringify(data.templates || {}));
+        customs = (data.custom || []).map(c => Object.assign({ _id: ++customSeq, _saved: c.name }, c));
+        renderCustomRows();
+        cmRefresh();
+        renderTimeMethods();
+        renderCameras();
+        renderTimezones();
+        renderRows();
+        updateProvider();
+        updateEmail();
+        el('nt-email-enabled').onchange = updateEmail;
+        el('nt-email-preset').onchange = applyPreset;
+        el('nt-email-from').onchange = () => {
+            const from = el('nt-email-from').value.trim();
+            if (from && !el('nt-email-to').value.trim()) el('nt-email-to').value = from;
+        };
+        el('nt-email-username').onchange = () => {
+            const u = el('nt-email-username').value.trim();
+            if (!el('nt-email-from').value.trim() && el('nt-email-preset').value === 'gmail' && u.includes('@')) {
+                el('nt-email-from').value = u;
+                el('nt-email-from').onchange();
+            }
+        };
+        updateEnabled();
+        el('nt-auth').onchange = updateAuth;
+        el('nt-provider').onchange = updateProvider;
+        el('nt-use-public').onclick = usePublicServer;
+        el('nt-printer-url').onchange = updatePrinterUrl;
+        el('nt-fill').onclick = e => {
+            e.stopPropagation();
+            if (el('nt-fill-menu').classList.contains('open')) closeFill(); else openFill();
+        };
+        // First setup only: the address this page was opened with. Once
+        // saved, an empty field means "no buttons" and is left alone.
+        const firstSetup = !data.enabled && !data.server && !data.pushover_user && !data.has_secret;
+        if (firstSetup && !data.printer_url && /^https?:$/.test(location.protocol) && location.hostname) {
+            el('nt-printer-url').value = location.protocol + '//' + location.host;
+        }
+        updatePrinterUrl();
+        el('nt-server').oninput = updatePublicWarning;
+        el('nt-topic').oninput = () => {
+            const t = el('nt-topic'), clean = t.value.replace(/[^A-Za-z0-9_-]/g, '');
+            if (clean !== t.value) {
+                const at = t.selectionStart - (t.value.length - clean.length);
+                t.value = clean;
+                t.setSelectionRange(Math.max(0, at), Math.max(0, at));
+            }
+        };
+        el('nt-topic-random').onclick = () => { el('nt-topic').value = randomTopic(); };
+        el('nt-camera').onchange = updateCamera;
+        el('nt-enabled').onchange = updateEnabled;
+        document.querySelectorAll('[data-toggle]').forEach(btn => {
+            btn.onclick = () => {
+                const input = el(btn.dataset.toggle);
+                const show = input.type === 'password';
+                input.type = show ? 'text' : 'password';
+                btn.textContent = show ? 'Hide' : 'Show';
+            };
+        });
+        el('pr-status').textContent = data.meta.summary || '';
+        // During a print job: every setting applies live, nothing restarts
+        el('pr-safe').classList.toggle('on', !!data.meta.busy);
+        el('pr-loading').classList.add('pr-hidden');
+        el('nt-root').classList.remove('pr-hidden');
+        saved = JSON.stringify(collect(false));
+        savedTpl = JSON.stringify(tplEdits);
+        savedCustoms = JSON.stringify(Object.fromEntries(customs.map(c => [c._id, pickCustom(c)])));
+        // Just loaded or saved: nothing to discard, nothing changed
+        el('pr-close').disabled = true;
+        snapshotFields();
+    }
+
+    // Changed fields: each control's value as last loaded or saved; a
+    // control that differs marks its notification row, its field or its
+    // section switch
+    let fieldSnap = new Map();
+    const ctlValue = c => c.type === 'checkbox' ? c.checked : c.value;
+    function snapshotFields() {
+        fieldSnap = new Map();
+        el('nt-root').querySelectorAll('input, select, textarea').forEach(c => fieldSnap.set(c, ctlValue(c)));
+        markChanged();
+    }
+    function markChanged() {
+        el('nt-root').querySelectorAll('.nt-chg').forEach(e => e.classList.remove('nt-chg'));
+        for (const [c, v] of fieldSnap) {
+            if (!c.isConnected || ctlValue(c) === v) continue;
+            const box = (el('nt-rows').contains(c) && c.closest('tr')) ||
+                c.closest('label.nt-enable') || c.closest('.nt-field') || c.closest('.nt-eta');
+            if (box) box.classList.add('nt-chg');
+        }
+        // The templates: the rows whose notifications' templates changed
+        let was = {};
+        try { was = JSON.parse(savedTpl || '{}'); } catch (e) { /* first render */ }
+        (state.meta.templates || []).forEach(t => {
+            if (JSON.stringify(tplEdits[t.key] || null) === JSON.stringify(was[t.key] || null)) return;
+            const tr = el('nt-rows').querySelector(`tr[data-row="${t.row}"]`);
+            if (tr) tr.classList.add('nt-chg');
+        });
+        let wasC = {};
+        try { wasC = JSON.parse(savedCustoms || '{}'); } catch (e) { /* first render */ }
+        customs.forEach(c => {
+            if (JSON.stringify(pickCustom(c)) === JSON.stringify(wasC[c._id] || null)) return;
+            const tr = el('nt-crows').querySelector(`tr[data-crow="${c._id}"]`);
+            if (tr) tr.classList.add('nt-chg');
+        });
+    }
+
+    function collect(strict) {
+        const fail = msg => { if (strict) throw new Error(msg); };
+        const enabled = el('nt-enabled').checked;
+        const pushEnabled = el('nt-push-enabled').checked;
+        const provider = el('nt-provider').value;
+        const emailEnabled = el('nt-email-enabled').checked;
+        const emailPassword = el('nt-email-password').value;
+        const webhookEnabled = el('nt-wh-enabled').checked;
+        const webhookUrl = el('nt-wh-url').value.trim();
+        if (enabled && !pushEnabled && !emailEnabled && !webhookEnabled) fail('Enable push notifications, email or a webhook.');
+        if (webhookEnabled && !webhookUrl && !state.has_webhook_url) fail('Enter the webhook URL.');
+        if (emailEnabled) {
+            if (!el('nt-email-host').value.trim()) fail('Enter the SMTP server.');
+            if (el('nt-email-username').value.trim() && !emailPassword && !state.has_email_password) fail('Enter the email password.');
+            if (!el('nt-email-from').value.trim()) fail('Enter the From address.');
+            if (!el('nt-email-to').value.trim()) fail('Enter the To address.');
+        }
+        const server = el('nt-server').value.trim();
+        const topic = el('nt-topic').value.trim();
+        const auth = el('nt-auth').value;
+        const keepSecret = state.has_secret && state.provider === provider;
+        let secret;
+        if (provider === 'ntfy') {
+            if (enabled && !server) fail('Enter the ntfy server URL.');
+            if (enabled && isPublic(server) && topic.length < 16) fail('On the public ntfy.sh server use a topic of at least 16 characters (Random creates one).');
+            if (enabled && !topic) fail('Enter a topic.');
+            secret = el('nt-secret').value.trim();
+            if (auth !== 'none' && !secret && !(keepSecret && auth === state.auth)) fail(auth === 'token' ? 'Enter the access token.' : 'Enter the password.');
+        } else if (provider === 'pushover') {
+            if (enabled && !el('nt-po-user').value.trim()) fail('Enter your Pushover user key.');
+            secret = el('nt-po-token').value.trim();
+            if (enabled && !secret && !keepSecret) fail('Enter the Pushover application API token.');
+        } else if (provider === 'gotify') {
+            if (enabled && !el('nt-gt-server').value.trim()) fail('Enter the Gotify server URL.');
+            secret = el('nt-gt-token').value.trim();
+            if (enabled && !secret && !keepSecret) fail('Enter the Gotify app token.');
+        } else if (provider === 'telegram') {
+            secret = el('nt-tg-token').value.trim();
+            if (enabled && !secret && !keepSecret) fail('Enter the Telegram bot token from @BotFather.');
+        } else if (provider === 'discord') {
+            secret = el('nt-dc-hook').value.trim();
+            if (enabled && !secret && !keepSecret) fail('Enter the Discord webhook URL.');
+        } else if (provider === 'discord_dm') {
+            secret = el('nt-dc-token').value.trim();
+            if (enabled && !secret && !keepSecret) fail('Enter the Discord bot token.');
+        }
+        const rows = {};
+        state.meta.rows.forEach(meta => {
+            if (!document.querySelector(`[data-enabled="${meta.id}"]`)) return;
+            rows[meta.id] = {
+                enabled: document.querySelector(`[data-enabled="${meta.id}"]`).checked,
+                priority: state.rows[meta.id].priority,
+                email: document.querySelector(`[data-email="${meta.id}"]`).checked
+            };
+        });
+        // Each notification's template: the whole of an edited one (what
+        // equals the default is dropped on save), null for the default
+        const templates = {};
+        (state.meta.templates || []).forEach(t => {
+            templates[t.key] = isEdited(t.key) ? effective(t.key) : null;
+        });
+        const payload = {
+            enabled, push_enabled: pushEnabled, provider, server, topic, auth,
+            pushover_user: el('nt-po-user').value.trim(),
+            pushover_device: el('nt-po-device').value.trim(),
+            gotify_server: el('nt-gt-server').value.trim().replace(/\/+$/, ''),
+            telegram_chat: el('nt-tg-chat').value.trim(),
+            discord_user: el('nt-dc-user').value.trim(),
+            discord_mention: el('nt-dc-mention').value.trim().replace(/^@/, ''),
+            username: el('nt-username').value.trim(),
+            name: el('nt-name').value.trim() || state.meta.default_name || 'Printer',
+            camera: el('nt-camera').value,
+            printer_url: el('nt-printer-url').value.trim(),
+            layers_complete: parseInt(el('nt-layers').value, 10) || 2,
+            first_layer_objects: el('nt-layer-objects').value,
+            filament_change_events: el('nt-fc-loaded') ? ['loaded', 'unloaded'].filter(e => el('nt-fc-' + e).checked).join(',') : [].concat(state.filament_change_events || []).join(','),
+            driver_temp: parseInt(el('nt-driver-hot').value, 10) || 105,
+            report_interval: parseInt(el('nt-report-interval').value, 10) || 30,
+            complete_objects: el('nt-complete-objects').value,
+            filament_low_percent: parseInt(el('nt-fl-percent').value, 10) || 0,
+            filament_low_grams: parseInt(el('nt-fl-grams').value, 10) || 0,
+            filament_unknown: el('nt-fl-unknown').checked,
+            time_left: timeMethod(),
+            progress_marks: (state.meta.progress_marks || [25, 50, 75]).filter(m => el('nt-pm-' + m) && el('nt-pm-' + m).checked).join(','),
+            email_enabled: emailEnabled,
+            email_host: el('nt-email-host').value.trim(),
+            email_port: parseInt(el('nt-email-port').value, 10) || 0,
+            email_security: el('nt-email-security').value,
+            email_username: el('nt-email-username').value.trim(),
+            email_from: el('nt-email-from').value.trim(),
+            email_to: el('nt-email-to').value.trim(),
+            webhook_enabled: webhookEnabled,
+            // The printer's clock may be UTC: ETAs are shown in this browser's time zone
+            timezone: el('nt-tz').value || 'browser',
+            browser_timezone: BROWSER_TZ,
+            rows, templates,
+            custom: customs.map(pickCustom)
+        };
+        if (secret) payload.secret = secret;
+        if (emailPassword) payload.email_password = emailPassword;
+        if (webhookUrl) payload.webhook_url = webhookUrl;
+        return payload;
+    }
+
+    // ---- actions -----------------------------------------------------------
+    function showError(msg) {
+        el('pr-error').textContent = msg || '';
+        el('pr-error').style.display = msg ? '' : 'none';
+        if (msg) el('pr-error').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    // Save and Send Test run in a popup (as Firmware Config's actions
+    // do): a message, the log, and Close once it's finished
+    function runStart(title, message) {
+        el('pr-run-title').textContent = title;
+        runMessage(message, '');
+        el('pr-console').innerHTML = '';
+        el('pr-run-close').disabled = true;
+        el('pr-run').classList.add('open');
+    }
+    function runMessage(html, kind) {
+        el('pr-run-msg').innerHTML = html;
+        el('pr-run-msg').className = 'pr-run-msg' + (kind ? ' ' + kind : '');
+    }
+    function runEnd(html, ok) {
+        runMessage(html, ok ? 'ok' : 'err');
+        el('pr-run-close').disabled = false;
+        el('pr-run-close').focus();
+    }
+    el('pr-run-close').onclick = () => el('pr-run').classList.remove('open');
+
+    function showConsole(lines) {
+        const box = el('pr-console');
+        box.innerHTML = lines.map(l => {
+            const c = l.startsWith('!! ') ? 'err' : (/^(Sent to|Test notification sent|Settings saved)/.test(l) ? 'ok' : '');
+            return `<div class="${c}">${esc(l.replace(/^!! /, ''))}</div>`;
+        }).join('');
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function busy(on, what) {
+        el('pr-save').disabled = on;
+        el('pr-test').disabled = on;
+        if (what) el('pr-status').textContent = what;
+    }
+
+    // Live checks, as you type: a number outside its range, a printer name
+    // with characters it can't have; outlined in red with what it must be
+    function liveCheck(input) {
+        let bad = '';
+        if (input.type === 'number' && input.min !== '' && input.max !== '') {
+            const v = Number(input.value), lo = Number(input.min), hi = Number(input.max);
+            if (input.value === '' || !Number.isInteger(v) || v < lo || v > hi) bad = `Must be ${lo} to ${hi}.`;
+        } else if (input.id === 'nt-name') {
+            if (input.value && !/^[\p{L}\p{N}_ .()\-]{1,32}$/u.test(input.value)) bad = 'Up to 32 letters, digits, spaces and . ( ) - _';
+        }
+        input.classList.toggle('nt-live-bad', !!bad);
+        let msg = input.parentElement.querySelector(':scope > .nt-live-msg');
+        if (bad && !msg) {
+            msg = document.createElement('span');
+            msg.className = 'nt-live-msg';
+            input.after(msg);
+        }
+        if (msg) { msg.textContent = bad ? '⚠️ ' + bad : ''; msg.style.display = bad ? '' : 'none'; }
+        return !bad;
+    }
+    const LIVE = 'input[type="number"][min][max], #nt-name';
+    document.addEventListener('input', e => {
+        if (e.target.matches && e.target.matches(LIVE) && !e.target.closest('.pr-modal')) liveCheck(e.target);
+    });
+    function liveCheckAll() {
+        return [...document.querySelectorAll(LIVE)].filter(i => !i.closest('.pr-modal') && i.offsetParent !== null && !i.disabled)
+            .map(liveCheck).every(Boolean);
+    }
+
+    async function save() {
+        showError('');
+        let payload;
+        if (!liveCheckAll()) {
+            runStart('Save & Apply', 'Checking the settings…');
+            showConsole(['!! ⚠️ Not saved.', '!! A setting outlined in red can\'t be used: it says what it must be. Change it, then save again.']);
+            runEnd('Not saved', false);
+            return;
+        }
+        const bad = badTopics();
+        if (bad.length) {
+            runStart('Save & Apply', 'Checking the settings…');
+            showConsole([
+                '!! ⚠️ Not saved.',
+                `!! The push service is Telegram, but ${bad.length === 1 ? 'this notification has a topic' : 'these notifications have topics'} from before the switch that Telegram can't use: ${bad.join(', ')}.`,
+                "!! Telegram topics are IDs (numbers). Open each one's Edit and change its Topic ID to a number, or clear it (empty: the chat itself). Then save again."
+            ]);
+            runEnd('Not saved', false);
+            return;
+        }
+        try { payload = collect(true); } catch (e) { showError(e.message); return; }
+        busy(true, 'Saving…');
+        runStart('Save & Apply', 'Saving and applying settings…');
+        try {
+            const data = await api('/server/pushraker/config', 'POST', payload);
+            const notes = (data.notes || []).slice();
+            render(data);
+            showConsole(['Settings saved and applied. Nothing restarts: they are in effect now, during a print job too.'].concat(notes));
+            el('pr-status').textContent = 'Saved and applied';
+            runEnd('Done', true);
+        } catch (e) {
+            showConsole(['!! ' + e.message]);
+            el('pr-status').textContent = '';
+            runEnd('Not saved', false);
+        } finally {
+            busy(false);
+        }
+    }
+
+    async function test() {
+        showError('');
+        let payload;
+        try { payload = collect(true); } catch (e) { showError(e.message); return; }
+        busy(true, 'Sending a test notification…');
+        runStart('Send Test', 'Sending a test notification (this can take up to a minute per destination)…');
+        const failed = 'Test failed.' + guideLink('troubleshooting', 'Troubleshooting');
+        try {
+            const data = await api('/server/pushraker/test', 'POST', payload);
+            showConsole(data.lines || []);
+            if (data.ok) el('pr-status').textContent = 'Test sent';
+            else el('pr-status').innerHTML = failed;
+            runEnd(data.ok ? 'Test sent' : failed, data.ok);
+        } catch (e) {
+            showConsole(['!! ' + e.message]);
+            el('pr-status').innerHTML = failed;
+            runEnd(failed, false);
+        } finally {
+            busy(false);
+        }
+    }
+
+    async function load() {
+        try {
+            render(await api('/server/pushraker/config'));
+        } catch (e) {
+            if (e.auth) {
+                el('pr-loading').innerHTML = 'Moonraker\'s authorization is on and this browser isn\'t a trusted client. ' +
+                    'Paste an API key (Fluidd: Settings &gt; Authorization &gt; API key): ' +
+                    '<div class="nt-inline" style="margin-top:10px"><input class="nt-input" id="pr-api-key" autocomplete="off" spellcheck="false"> ' +
+                    '<button type="button" class="btn btn-primary" id="pr-api-key-ok">Use key</button></div>';
+                el('pr-api-key-ok').onclick = () => {
+                    try { localStorage.setItem('pushraker.apiKey', el('pr-api-key').value.trim()); } catch (err) { /* private mode */ }
+                    base = null;
+                    el('pr-loading').textContent = 'Loading settings…';
+                    load();
+                };
+                return;
+            }
+            el('pr-loading').textContent = `Could not load the settings from Moonraker: ${e.message}. Is the pushraker component enabled ([pushraker] in moonraker.conf)?`;
+        }
+    }
+
+    el('pr-save').onclick = save;
+    el('pr-test').onclick = test;
+    // Discard changes: back to the last saved settings, on this page.
+    // Only with unsaved changes (the button is greyed out otherwise)
+    let closing = false;
+    const dirty = () => !!state && JSON.stringify(collect(false)) !== saved;
+    const markDirty = () => { el('pr-close').disabled = !dirty(); markChanged(); renderTopicWarning(); };
+    document.addEventListener('input', markDirty);
+    document.addEventListener('change', markDirty);
+    // Buttons that fill a field in (Fill in, Random, Use public server)
+    document.addEventListener('click', () => setTimeout(markDirty, 0));
+    // With unsaved changes, a warning first: the discard button only
+    // works after 5 seconds, so a misclick can't throw the changes away
+    function confirmDiscard() {
+        return new Promise(resolve => {
+            const box = el('pr-discard'), yes = el('pr-discard-yes'), no = el('pr-discard-no');
+            let left = 5, timer = null;
+            const tick = () => {
+                yes.disabled = left > 0;
+                yes.textContent = left > 0 ? `Discard changes (${left})` : 'Discard changes';
+                if (left-- > 0) timer = setTimeout(tick, 1000);
+            };
+            const done = v => {
+                clearTimeout(timer);
+                document.removeEventListener('keydown', esc);
+                box.classList.remove('open');
+                resolve(v);
+            };
+            const esc = e => { if (e.key === 'Escape') done(false); };
+            yes.onclick = () => { if (!yes.disabled) done(true); };
+            no.onclick = () => done(false);
+            box.onclick = e => { if (e.target === box) done(false); };
+            document.addEventListener('keydown', esc);
+            box.classList.add('open');
+            no.focus();
+            tick();
+        });
+    }
+    el('pr-close').onclick = async () => {
+        if (!dirty() || !(await confirmDiscard())) return;
+        render(state);
+        el('pr-close').disabled = true;
+        el('pr-status').textContent = 'Changes discarded';
+    };
+    window.addEventListener('beforeunload', e => {
+        if (closing) return;
+        if (dirty()) { e.preventDefault(); e.returnValue = ''; }
+    });
+    load();
+})();
+
+</script>
+</body>
+</html>
