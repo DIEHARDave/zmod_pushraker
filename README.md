@@ -15,6 +15,10 @@ covers the settings.
 It replaces Zmod's `notify` plugin (and `notify_discord`, its Discord
 add-on): turn those off first, both would send for the same events.
 
+<p align="center">
+  <img src="docs/images/settings-page.png" alt="pushraker settings page" width="480">
+</p>
+
 ## Discord cards
 
 A Discord message gets the status card fields that
@@ -32,6 +36,12 @@ when paused, blue when ready. pushraker's error and failure notifications
 stay red. The camera snapshot stays inside the card, below the fields.
 To turn the cards off, set `discord_cards: False` under `[pushraker_cards]`
 in `zmod_pushraker.moonraker.conf` and reboot.
+
+<p align="center">
+  <img src="docs/images/discord-started.png" alt="Print started card" width="300">
+  <img src="docs/images/discord-progress.png" alt="Progress card with camera snapshot" width="300">
+  <img src="docs/images/discord-complete.png" alt="Print complete card" width="300">
+</p>
 
 ## Install
 
